@@ -88,14 +88,33 @@ async function main() {
   const cliente = new Client(30_000);
   cliente.ftp.verbose = false;
   try {
-    await cliente.access({
-      host: env.FTP_HOST,
-      port: Number(env.FTP_PORT || 21),
-      user: env.FTP_USER,
-      password: env.FTP_PASSWORD,
-      secure: true, // FTPS explícito sobre el puerto 21
-      secureOptions: { rejectUnauthorized: false },
-    });
+    // Se INTENTA FTPS explícito primero, siempre. Solo si el servidor lo
+    // rechaza se cae a FTP plano — y se avisa fuerte, porque en plano la
+    // contraseña viaja legible por la red.
+    //
+    // El 5 de agosto de 2026 el hosting empezó a responder 504 a AUTH TLS
+    // pese a anunciar [TLS] en el banner (y el 990 cerrado). De ahí este
+    // fallback: sin él no había forma de publicar.
+    const conectar = (secure) =>
+      cliente.access({
+        host: env.FTP_HOST,
+        port: Number(env.FTP_PORT || 21),
+        user: env.FTP_USER,
+        password: env.FTP_PASSWORD,
+        secure,
+        secureOptions: { rejectUnauthorized: false },
+      });
+
+    try {
+      await conectar(true);
+    } catch (e) {
+      console.warn(
+        `\n  ⚠ El servidor rechazó FTPS (${e.message}).` +
+          `\n  ⚠ Subiendo en FTP PLANO: usuario y contraseña viajan sin cifrar.` +
+          `\n  ⚠ Cambia la contraseña del FTP después de usar una red que no controles.\n`,
+      );
+      await conectar(false);
+    }
 
     const destino = env.FTP_REMOTE_DIR || "/";
     if (destino !== "/") await cliente.ensureDir(destino);
