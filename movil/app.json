@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "KineView",
-    "slug": "kineview-lab",
+    "slug": "kineview-continuidad",
+    "owner": "kineview",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,7 +27,9 @@
         "backgroundColor": "#FFFFFF"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "plugins": [
       "expo-dev-client",
@@ -41,12 +44,16 @@
       [
         "react-native-mediapipe-posedetection",
         {
-          "assetsPaths": ["./assets/models/"]
+          "assetsPaths": [
+            "./assets/models/"
+          ]
         }
       ]
     ],
     "extra": {
-      "eas": {}
+      "eas": {
+        "projectId": "06cdbd10-a474-4cf7-ab45-6fbef1e740c5"
+      }
     }
   }
 }
