@@ -22,3 +22,7 @@ ios/
 .DS_Store
 Thumbs.db
 *.log
+
+# Modelo BlazePose: 5,7 MB del CDN publico de Google.
+# No se versiona; se descarga con `npm run modelo` (ver movil/README.md).
+movil/assets/models/*.task

@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "KineView",
+    "slug": "kineview-lab",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "cl.kineview.lab",
+      "infoPlist": {
+        "NSCameraUsageDescription": "KineView usa la cámara para medir tus ejercicios. El video no sale de tu teléfono."
+      }
+    },
+    "android": {
+      "package": "cl.kineview.lab",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": ["android.permission.CAMERA"]
+    },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "KineView usa la cámara para medir tus ejercicios. El video no sale de tu teléfono.",
+          "enableMicrophonePermission": false,
+          "enableCodeScanner": false
+        }
+      ],
+      [
+        "react-native-mediapipe-posedetection",
+        {
+          "assetsPaths": ["./assets/models/"]
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {}
+    }
+  }
+}
