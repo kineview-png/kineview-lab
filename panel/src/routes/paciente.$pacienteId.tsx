@@ -14,6 +14,7 @@ import { BorradorTag, KvBanner, KvHeader, Semaforo } from "@/components/kineview
 import { PortalKine } from "@/components/kineview/sesion";
 import { etiquetaRiesgo } from "@/lib/kineview-data";
 import { cargarPacientes, cargarUltimoInforme, type Paciente } from "@/lib/kineview-real";
+import { lecturaKine } from "@/lib/progreso";
 
 export const Route = createFileRoute("/paciente/$pacienteId")({
   head: () => ({
@@ -280,6 +281,8 @@ function DetallePaciente() {
           </div>
         </section>
 
+        <ProyeccionAvance paciente={paciente} />
+
         <section className="space-y-3">
           <h2 className="text-base font-bold">Alertas del agente</h2>
           {paciente.alertas.length === 0 && (
@@ -401,6 +404,37 @@ function DetallePaciente() {
         )}
       </main>
     </div>
+  );
+}
+
+/**
+ * Proyección de avance.
+ *
+ * Deliberadamente muestra el CÁLCULO y no solo el número: pendiente, R² y
+ * cuántas sesiones lo sustentan. Un kinesiólogo que va a decidir sobre esto
+ * necesita poder desconfiar del dato, y para desconfiar hay que ver de dónde
+ * salió. Cuando no hay evidencia para proyectar, dice por qué en vez de
+ * quedarse en blanco.
+ */
+function ProyeccionAvance({ paciente }: { paciente: Paciente }) {
+  const l = lecturaKine(paciente.progreso ?? []);
+  const color = {
+    alto: "text-risk-high",
+    medio: "text-risk-mid",
+    bajo: "text-risk-low",
+  }[l.tono];
+
+  return (
+    <section className="card-clinic p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-base font-bold">Proyección de avance</h2>
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Regresión lineal · sin modelo
+        </span>
+      </div>
+      <p className={`text-lg font-bold ${color}`}>{l.titular}</p>
+      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{l.detalle}</p>
+    </section>
   );
 }
 

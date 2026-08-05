@@ -11,6 +11,7 @@
 
 import { supabase } from "./supabase";
 import type { Paciente as PacienteBase, Riesgo } from "./kineview-data";
+import type { PuntoProgreso } from "./progreso";
 
 export type { Riesgo };
 
@@ -19,6 +20,8 @@ export type Paciente = PacienteBase & {
   puntaje: number | null;
   /** Timestamp de la alerta abierta más antigua. Desempata la cola. */
   alertaDesde: number | null;
+  /** Rango por sesión, de la más antigua a la más nueva. Alimenta la proyección. */
+  progreso: PuntoProgreso[];
 };
 
 /** El agente habla en verde/ámbar/rojo; la UI de Paulina en bajo/medio/alto. */
@@ -163,6 +166,13 @@ export async function cargarPacientes(): Promise<Paciente[]> {
       ultimaAlerta: aa[0]?.title ?? "Sin alertas del agente.",
       puntaje: informesDe.get(v.patient_id)?.[0]?.risk_score ?? null,
       serie: serieSemanal(ss),
+      // `ss` viene ordenado de la más nueva a la más vieja; la regresión
+      // necesita el orden cronológico. Las sesiones sin rango medido se
+      // descartan: un null no es un cero.
+      progreso: ss
+        .filter((s): s is FilaSesion & { rom_avg_deg: number } => s.rom_avg_deg !== null)
+        .map((s) => ({ fecha: new Date(s.created_at), rom: s.rom_avg_deg }))
+        .reverse(),
       alertaDesde: abiertas.length
         ? Math.min(...abiertas.map((a) => new Date(a.created_at).getTime()))
         : null,

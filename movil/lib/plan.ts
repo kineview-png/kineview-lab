@@ -38,8 +38,12 @@ export const EJERCICIO_DE_HOY: Ejercicio = {
 
 export type LadoAfectado = 'izquierdo' | 'derecho';
 
+import type { PuntoProgreso } from './progreso';
+
 export type EstadoPersona = {
   nombre: string;
+  /** Rango por sesión, de la más antigua a la más nueva. Alimenta el progreso. */
+  progreso: PuntoProgreso[];
   ladoAfectado: LadoAfectado | null;
   racha: number;
   sesionesEstaSemana: number;
@@ -83,18 +87,28 @@ export async function cargarEstado(): Promise<EstadoPersona> {
     supabase.from('profiles').select('display_name, affected_side').eq('id', id!).maybeSingle(),
     supabase
       .from('sessions')
-      .select('created_at')
+      .select('created_at, rom_avg_deg')
       .eq('patient_id', id!)
       .order('created_at', { ascending: false })
       .limit(60),
   ]);
 
-  const fechas = (sesiones ?? []).map((s: { created_at: string }) => new Date(s.created_at));
+  type Fila = { created_at: string; rom_avg_deg: number | null };
+  const filas = (sesiones ?? []) as Fila[];
+  const fechas = filas.map((s) => new Date(s.created_at));
+
+  // De la más antigua a la más nueva, y solo las que midieron rango: una
+  // sesión sin ROM no aporta a la curva y arrastraría la tendencia a cero.
+  const progreso: PuntoProgreso[] = filas
+    .filter((s) => s.rom_avg_deg !== null)
+    .map((s) => ({ fecha: new Date(s.created_at), rom: Number(s.rom_avg_deg) }))
+    .reverse();
   const haceUnaSemana = Date.now() - 7 * DIA_MS;
   const hoy = aDia(new Date());
 
   return {
     nombre: (perfil?.display_name ?? '').split(' ')[0],
+    progreso,
     ladoAfectado: (perfil?.affected_side as LadoAfectado | null) ?? null,
     racha: calcularRacha(fechas),
     sesionesEstaSemana: fechas.filter((f) => f.getTime() >= haceUnaSemana).length,

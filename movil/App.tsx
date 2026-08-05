@@ -27,6 +27,7 @@ import { Esqueleto } from './components/Esqueleto';
 import { Logo } from './components/Logo';
 import { CarasDolor, SelectorLado, TamizajeSignos, type ClaveSigno } from './components/Clinico';
 import { DemoEjercicio } from './components/DemoEjercicio';
+import { TarjetaProgreso } from './components/Progreso';
 import { callar, decirInstruccionInicial, decirRepeticion, hablar } from './lib/voz';
 import { C, R } from './lib/theme';
 import { supabase } from './lib/supabase';
@@ -473,6 +474,8 @@ function PantallaInicio({ onComenzar }: { onComenzar: (lado: LadoAfectado) => vo
           <Metrica valor={`${estado.totalSesiones}`} etiqueta="en total" />
         </View>
       )}
+
+      {!!estado?.progreso?.length && <TarjetaProgreso puntos={estado.progreso} />}
 
       {estado?.ultimaSesion && !hechoHoy && (
         <Text style={s.parrafoSuave}>
