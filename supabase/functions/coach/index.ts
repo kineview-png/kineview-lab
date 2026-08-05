@@ -27,7 +27,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { betaZodTool } from "npm:@anthropic-ai/sdk/helpers/beta/zod";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@^2.45.0";
-import { z } from "npm:zod@^3.25.76";
+import { z } from "npm:zod@^4.0.0";
 
 import { SYSTEM_FEEDBACK, SYSTEM_TRIAJE, BLOQUE_GUIA } from "./prompts.ts";
 import { buscarFragmentos } from "./guia-clinica.ts";
@@ -50,8 +50,13 @@ const MODEL_TRIAJE = Deno.env.get("COACH_MODEL_TRIAJE") ?? "claude-opus-4-7";
 const MODEL_FEEDBACK = Deno.env.get("COACH_MODEL_FEEDBACK") ?? "claude-sonnet-4-6";
 
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+// Este proyecto usa el formato nuevo de llaves (sb_publishable_ / sb_secret_),
+// así que no damos por hecho que Supabase inyecte las variables heredadas.
+// Se leen las propias primero y las inyectadas quedan de respaldo.
+const SUPABASE_URL = Deno.env.get("SB_URL") ?? Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SB_SECRET_KEY") ??
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -273,20 +278,18 @@ Deno.serve(async (req: Request) => {
 
   const t0 = Date.now();
 
+  // Cliente administrativo: es el ÚNICO que puede escribir en `alerts`.
+  // Ningún cliente autenticado tiene política de INSERT sobre esa tabla.
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+
   // ── 1. Identidad: sale del JWT, NUNCA del cuerpo de la petición ────────────
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const comoUsuario = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: userData, error: authError } = await comoUsuario.auth.getUser();
+  // El token se valida contra el servidor de auth; no se decodifica a mano.
+  const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data: userData, error: authError } = await admin.auth.getUser(token);
   if (authError || !userData?.user) {
     return json({ error: "No autenticado." }, 401);
   }
   const patientId = userData.user.id;
-
-  // Cliente administrativo: es el ÚNICO que puede escribir en `alerts`.
-  // Ningún cliente autenticado tiene política de INSERT sobre esa tabla.
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
   // ── 2. Validación de entrada ──────────────────────────────────────────────
   let cuerpo: unknown;
@@ -320,8 +323,12 @@ Deno.serve(async (req: Request) => {
       const respuesta = await anthropic.messages.create({
         model: MODEL_FEEDBACK,
         max_tokens: 1500,
-        // Sin `thinking`: acá manda la latencia. El razonamiento profundo
-        // ocurre en la otra ruta, donde nadie está esperando.
+        // Razonamiento APAGADO de forma explícita, no por omisión: en Sonnet 5
+        // omitir `thinking` activa el modo adaptativo, y acá la latencia es lo
+        // único que importa — la persona tiene el teléfono en la mano. El
+        // razonamiento profundo ocurre en la otra ruta, donde nadie espera.
+        // (`disabled` solo se acepta con effort `high` o menor; usamos `low`.)
+        thinking: { type: "disabled" },
         output_config: { effort: "low" },
         system: [
           { type: "text", text: SYSTEM_FEEDBACK },
@@ -387,7 +394,11 @@ Deno.serve(async (req: Request) => {
         content:
           `Analiza esta sesión y emite el informe.\n\n${describirSesion(sesion)}`,
       }],
-      max_iterations: 8,
+      // El techo real es el reloj de 150 s de las Edge Functions, no el bucle.
+      // Con 3 herramientas, 6 iteraciones sobran para consultar historial y
+      // guía y emitir; más que eso significa que el agente se atascó y
+      // preferimos cortarlo antes de que el runtime lo corte por nosotros.
+      max_iterations: 6,
     });
 
     // Acumulamos uso y razonamiento a lo largo del bucle de herramientas.

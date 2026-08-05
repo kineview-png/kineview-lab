@@ -9,7 +9,10 @@
 //      escrita en el prompt.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { z } from "npm:zod@^3.25.76";
+// Zod v4: el helper `betaZodTool` del SDK inspecciona el interno `_zod.def`,
+// que solo existe en v4. Pasarle un esquema v3 falla con
+// "Cannot read properties of undefined (reading 'def')".
+import { z } from "npm:zod@^4.0.0";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ENTRADA — lo que la app manda al terminar una sesión
@@ -56,6 +59,12 @@ export type EntradaSesion = z.infer<typeof EntradaSesion>;
 // SALIDA — el tool `emitir_informe`
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ⚠️ Sobre los topes de largo de acá abajo: son holgados a propósito.
+// Un informe se rechaza por razones CLÍNICAS (afirmación sin fuente, lenguaje
+// de diagnóstico dirigido al paciente, triaje incoherente), nunca por haberse
+// pasado de caracteres. La concisión se pide en el prompt, que es donde
+// corresponde; estos números solo atajan una salida desbocada.
+
 export const NivelTriaje = z.enum(["verde", "ambar", "rojo"]);
 
 /**
@@ -64,13 +73,13 @@ export const NivelTriaje = z.enum(["verde", "ambar", "rojo"]);
  * distintos y mezclarlos es como se filtra lenguaje clínico a un paciente.
  */
 export const BloquePaciente = z.object({
-  resumen: z.string().max(400)
+  resumen: z.string().max(900)
     .describe("Máximo 3 frases, en segunda persona, cálido, sin jerga clínica."),
-  lo_hiciste_bien: z.array(z.string().max(200)).max(2)
+  lo_hiciste_bien: z.array(z.string().max(400)).max(3)
     .describe("Máximo 2 cosas concretas que la persona hizo bien."),
-  a_corregir: z.array(z.string().max(200)).max(2)
+  a_corregir: z.array(z.string().max(400)).max(3)
     .describe("Máximo 2 correcciones, cada una una instrucción ejecutable."),
-  proxima_sesion: z.string().max(200)
+  proxima_sesion: z.string().max(500)
     .describe("Qué hacer en la próxima sesión. Sin cambiar cargas ni progresiones."),
 });
 
@@ -78,9 +87,9 @@ export const BloqueTriaje = z.object({
   nivel: NivelTriaje,
   puntaje: z.number().int().min(0).max(100)
     .describe("0 = sin riesgo, 100 = riesgo máximo."),
-  motivos: z.array(z.string().max(300)).min(1).max(6)
+  motivos: z.array(z.string().max(700)).min(1).max(8)
     .describe("Por qué se asignó este nivel. Cada motivo apoyado en datos de la sesión o del historial."),
-  banderas_rojas: z.array(z.string().max(300)).max(10)
+  banderas_rojas: z.array(z.string().max(700)).max(10)
     .describe("Signos de derivación inmediata detectados. Vacío si no hay."),
   contactar_kine_en: z.enum(["inmediato", "24h", "72h", "proxima_sesion", "no_requiere"]),
 });
@@ -90,10 +99,10 @@ export const BloqueTriaje = z.object({
  * profesional revisa, edita y firma.
  */
 export const NotaClinicaBorrador = z.object({
-  subjetivo: z.string().max(1200),
-  objetivo: z.string().max(1200),
-  analisis: z.string().max(1200),
-  plan: z.string().max(1200),
+  subjetivo: z.string().max(2500),
+  objetivo: z.string().max(2500),
+  analisis: z.string().max(2500),
+  plan: z.string().max(2500),
 });
 
 /**
@@ -102,10 +111,10 @@ export const NotaClinicaBorrador = z.object({
  * sugerencia del prompt, es una validación que corre antes de tocar la base.
  */
 export const Evidencia = z.object({
-  afirmacion: z.string().max(500),
-  fuente: z.string().min(3).max(300)
+  afirmacion: z.string().max(1000),
+  fuente: z.string().min(3).max(500)
     .describe("Documento y sección exactos. Nunca inventar una referencia."),
-  pagina: z.string().max(40).nullable().default(null),
+  pagina: z.string().max(300).nullable().default(null),
 });
 
 /**
@@ -113,8 +122,8 @@ export const Evidencia = z.object({
  * declara incertidumbre está mintiendo por omisión.
  */
 export const NoSe = z.object({
-  pregunta: z.string().max(300),
-  motivo: z.string().max(300),
+  pregunta: z.string().max(600),
+  motivo: z.string().max(1000),
 });
 
 export const Informe = z.object({
