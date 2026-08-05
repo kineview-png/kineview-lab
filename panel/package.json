@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "deploy": "node scripts/deploy.mjs"
+    "deploy": "node scripts/deploy.mjs",
+    "subir-apk": "node scripts/subir-apk.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
