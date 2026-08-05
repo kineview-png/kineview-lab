@@ -27,13 +27,24 @@ export const EJERCICIO_DE_HOY: Ejercicio = {
   nombre: 'Flexión de hombro, sentado',
   comoSeHace:
     'Siéntate derecho, con la espalda apoyada. Levanta el brazo hacia adelante tan alto como puedas sin dolor, mantenlo arriba mientras cuentas hasta tres, y bájalo despacio.',
-  porQue: 'Recupera el rango del hombro y ayuda a que vuelvas a alcanzar cosas sobre tu cabeza.',
+  // Paulina: el "para qué sirve" tiene que hablar de FUNCIONALIDAD, no de
+  // grados. A nadie le importa recuperar 30° de rango; le importa poder
+  // vestirse solo. El ejercicio es el medio, la autonomía es el fin, y decirlo
+  // así es lo que sostiene la adherencia un martes a las 8 de la mañana.
+  porQue:
+    'Para que tu brazo afectado vuelva a servirte en el día a día: peinarte, ' +
+    'vestirte, alcanzar un vaso de la repisa, sostenerte al levantarte. Cada ' +
+    'sesión recupera un poco del movimiento que necesitas para valerte por ti ' +
+    'mismo.',
   repsSugeridas: 10,
   segundosSosten: 3,
 };
 
+export type LadoAfectado = 'izquierdo' | 'derecho';
+
 export type EstadoPersona = {
   nombre: string;
+  ladoAfectado: LadoAfectado | null;
   racha: number;
   sesionesEstaSemana: number;
   sesionesHoy: number;
@@ -73,7 +84,7 @@ export async function cargarEstado(): Promise<EstadoPersona> {
   const id = usuario?.user?.id;
 
   const [{ data: perfil }, { data: sesiones }] = await Promise.all([
-    supabase.from('profiles').select('display_name').eq('id', id!).maybeSingle(),
+    supabase.from('profiles').select('display_name, affected_side').eq('id', id!).maybeSingle(),
     supabase
       .from('sessions')
       .select('created_at')
@@ -88,6 +99,7 @@ export async function cargarEstado(): Promise<EstadoPersona> {
 
   return {
     nombre: (perfil?.display_name ?? '').split(' ')[0],
+    ladoAfectado: (perfil?.affected_side as LadoAfectado | null) ?? null,
     racha: calcularRacha(fechas),
     sesionesEstaSemana: fechas.filter((f) => f.getTime() >= haceUnaSemana).length,
     sesionesHoy: fechas.filter((f) => aDia(f) === hoy).length,
@@ -105,6 +117,14 @@ export function saludoPorHora(): string {
   if (h < 12) return 'Buenos días';
   if (h < 20) return 'Buenas tardes';
   return 'Buenas noches';
+}
+
+/** Guarda el lado con secuela en el perfil, para no volver a preguntarlo. */
+export async function guardarLadoAfectado(lado: LadoAfectado): Promise<void> {
+  const { data } = await supabase.auth.getUser();
+  const id = data?.user?.id;
+  if (!id) return;
+  await supabase.from('profiles').update({ affected_side: lado }).eq('id', id);
 }
 
 /** "Hoy", "Ayer", "Hace 3 días" — nadie piensa en timestamps. */

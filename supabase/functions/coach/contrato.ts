@@ -35,12 +35,36 @@ export const RepMetric = z.object({
    */
   sosten_s: z.number().min(0).max(120).nullable().default(null),
   simetria_pct: z.number().min(0).max(100).nullable().default(null),
+  /** Inclinación máxima del tronco en esta repetición. Compensación. */
+  tronco_deg: z.number().min(0).max(90).nullable().default(null),
+  /** Elevación máxima del hombro que trabaja. Compensación escapular. */
+  hombro_deg: z.number().min(-90).max(90).nullable().default(null),
 });
+
+export const LadoCuerpo = z.enum(['izquierdo', 'derecho']);
+
+/**
+ * Tamizaje de signos de derivación inmediata. La app los pregunta uno por uno
+ * al terminar la sesión, con sí/no. Antes el prompt mandaba derivar si la
+ * persona los "refería", pero nada se los preguntaba: dependía de que los
+ * escribiera por su cuenta en un campo libre.
+ */
+export const SIGNOS_ALARMA = [
+  'debilidad_nueva',
+  'dificultad_hablar',
+  'perdida_vision',
+  'cefalea_subita',
+  'dolor_pecho',
+  'perdida_conciencia',
+  'caida_golpe_cabeza',
+] as const;
 
 export const EntradaSesion = z.object({
   session_id: z.string().uuid().optional(),
 
   ejercicio: z.string().min(1).max(80),
+  /** Lado con secuela: es el que se mide, no un lado fijo del código. */
+  lado_afectado: LadoCuerpo.nullable().default(null),
   numero_sesion: z.number().int().min(1).nullable().default(null),
   dias_desde_alta: z.number().int().min(0).nullable().default(null),
 
@@ -54,6 +78,14 @@ export const EntradaSesion = z.object({
   dolor_pre: z.number().int().min(0).max(10).nullable().default(null),
   dolor_post: z.number().int().min(0).max(10).nullable().default(null),
   sintomas: z.array(z.string().max(200)).max(20).default([]),
+  /** Signos de alarma marcados por la persona. Cualquiera obliga a derivar. */
+  signos_alarma: z.array(z.enum(SIGNOS_ALARMA)).max(7).default([]),
+  /** Peor inclinación de tronco de la sesión. */
+  tronco_max_deg: z.number().min(0).max(90).nullable().default(null),
+  /** Peor elevación del hombro que trabaja. */
+  hombro_max_deg: z.number().min(-90).max(90).nullable().default(null),
+  /** Repeticiones que superaron algún umbral de compensación. */
+  reps_compensadas: z.number().int().min(0).max(500).nullable().default(null),
 
   // Tope duro de 60: el límite de 2 s de CPU de las Edge Functions se revienta
   // solo con el JSON.parse de un arreglo grande.
@@ -225,7 +257,12 @@ export function validarGuardrails(candidato: unknown): ResultadoValidacion {
  * El modelo describe el riesgo; esta función decide si eso amerita encender
  * la bandeja del kinesiólogo.
  */
-export function ameritaAlerta(informe: Informe): boolean {
+export function ameritaAlerta(informe: Informe, signosAlarma: readonly string[] = []): boolean {
+  // Si la persona marcó un signo de derivación inmediata, la alerta se crea
+  // aunque el modelo hubiera decidido otra cosa. Esta rama existe justamente
+  // para no depender del criterio del modelo en el único caso donde
+  // equivocarse manda a alguien a su casa con un ACV en curso.
+  if (signosAlarma.length > 0) return true;
   if (informe.triaje.banderas_rojas.length > 0) return true;
   if (informe.triaje.nivel === "rojo") return true;
   if (informe.triaje.nivel === "ambar" && informe.triaje.puntaje >= 50) return true;

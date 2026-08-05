@@ -234,8 +234,21 @@ function describirSesion(s: EntradaSesion): string {
   const dato = (etiqueta: string, valor: unknown, unidad = "") =>
     valor === null || valor === undefined ? null : `- ${etiqueta}: ${valor}${unidad}`;
 
+  const ETIQUETA_ALARMA: Record<string, string> = {
+    debilidad_nueva: "debilidad o pérdida de fuerza NUEVA en cara, brazo o pierna",
+    dificultad_hablar: "dificultad NUEVA para hablar o entender",
+    perdida_vision: "pérdida brusca de visión",
+    cefalea_subita: "dolor de cabeza súbito e intenso",
+    dolor_pecho: "dolor en el pecho",
+    perdida_conciencia: "pérdida de conciencia",
+    caida_golpe_cabeza: "caída con golpe en la cabeza",
+  };
+
   const lineas = [
     `Ejercicio: ${s.ejercicio}`,
+    s.lado_afectado
+      ? `Lado afectado (el que se mide): ${s.lado_afectado}`
+      : "Lado afectado: NO DECLARADO — las métricas pueden no corresponder al lado con secuela.",
     dato("Número de sesión desde el alta", s.numero_sesion),
     dato("Días desde el alta", s.dias_desde_alta),
     `- Repeticiones completadas: ${s.reps}`,
@@ -246,9 +259,21 @@ function describirSesion(s: EntradaSesion): string {
     dato("Duración total", s.duracion_s, " s"),
     dato("Dolor antes (EVA 0-10)", s.dolor_pre),
     dato("Dolor después (EVA 0-10)", s.dolor_post),
+    dato("Inclinación máxima del tronco", s.tronco_max_deg, "° (compensación: se ladea para ganar rango)"),
+    dato("Elevación máxima del hombro", s.hombro_max_deg, "° (compensación: encoge el hombro)"),
+    dato("Repeticiones con compensación", s.reps_compensadas),
     s.sintomas.length > 0
       ? `- Síntomas referidos: ${s.sintomas.join("; ")}`
       : "- Síntomas referidos: ninguno",
+    "",
+    // El tamizaje se manda SIEMPRE, también cuando sale limpio: que el agente
+    // sepa que se preguntó y la respuesta fue no, en vez de tener que asumir
+    // que nadie preguntó.
+    s.signos_alarma.length > 0
+      ? `⚠️ TAMIZAJE DE DERIVACIÓN — la persona respondió QUE SÍ a: ${
+        s.signos_alarma.map((c) => ETIQUETA_ALARMA[c] ?? c).join("; ")
+      }`
+      : "Tamizaje de derivación: se le preguntó uno por uno por los signos de alarma y respondió que NO a todos.",
   ].filter(Boolean);
 
   if (s.metricas_por_rep.length > 0) {
@@ -488,7 +513,7 @@ ${describirSesion(sesion)}`;
 
     // ── La decisión de alertar la toma el CÓDIGO, no el modelo ─────────────
     let alertaId: string | null = null;
-    if (ameritaAlerta(informe)) {
+    if (ameritaAlerta(informe, sesion.signos_alarma)) {
       const { data: alerta, error: errAlerta } = await admin
         .from("alerts")
         .insert({
@@ -560,6 +585,11 @@ async function persistirSesion(
     .insert({
       patient_id: patientId,
       exercise_key: s.ejercicio,
+      affected_side: s.lado_afectado,
+      trunk_lean_max_deg: s.tronco_max_deg,
+      shoulder_hike_max_deg: s.hombro_max_deg,
+      compensated_reps: s.reps_compensadas,
+      alarm_signs: s.signos_alarma,
       session_number: s.numero_sesion,
       days_since_discharge: s.dias_desde_alta,
       reps: s.reps,

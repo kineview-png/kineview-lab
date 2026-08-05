@@ -25,20 +25,21 @@ import type { Session } from '@supabase/supabase-js';
 import { Boton } from './components/Boton';
 import { Esqueleto } from './components/Esqueleto';
 import { Logo } from './components/Logo';
+import { CarasDolor, SelectorLado, TamizajeSignos, type ClaveSigno } from './components/Clinico';
 import { C, R } from './lib/theme';
 import { supabase } from './lib/supabase';
 import { dispararTriaje, pedirFeedback, type Feedback } from './lib/coach';
 import {
-  avanzar, estadoInicial, flexionHombro, resumirSesion, simetria, sostenRestanteS,
+  avanzar, elevacionHombro, estadoInicial, flexionHombro, inclinacionTronco,
+  resumirSesion, simetria, sostenRestanteS,
   type EstadoContador, type Landmark,
 } from './lib/pose';
 import {
-  cargarEstado, cuandoFue, EJERCICIO_DE_HOY, META_DIARIA, saludoPorHora,
-  type EstadoPersona,
+  cargarEstado, cuandoFue, EJERCICIO_DE_HOY, guardarLadoAfectado, META_DIARIA,
+  saludoPorHora, type EstadoPersona, type LadoAfectado,
 } from './lib/plan';
 
 const EJERCICIO = 'flexion_hombro_sentado';
-const LADO_ACTIVO: 'izq' | 'der' = 'der';
 
 type Etapa = 'inicio' | 'dolor_pre' | 'midiendo' | 'dolor_post' | 'enviando' | 'feedback';
 
@@ -117,6 +118,11 @@ function PantallaSesion() {
   const [dolorPre, setDolorPre] = useState<number | null>(null);
   const [dolorPost, setDolorPost] = useState<number | null>(null);
   const [sintoma, setSintoma] = useState('');
+  const [lado, setLado] = useState<LadoAfectado | null>(null);
+  const [signos, setSignos] = useState<ClaveSigno[]>([]);
+  // El lado vive en un ref además del estado: el callback de la cámara corre a
+  // 30 fps y captura el valor del render en que se creó.
+  const ladoRef = useRef<'izq' | 'der'>('der');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   // El contador vive en un ref porque se actualiza a la velocidad de los frames
@@ -138,11 +144,15 @@ function PantallaSesion() {
     if (!lm || lm.length < 25) return;
 
     const ahora = Date.now();
-    const activo = flexionHombro(lm, LADO_ACTIVO);
+    const activo = flexionHombro(lm, ladoRef.current);
     const sim = simetria(flexionHombro(lm, 'izq'), flexionHombro(lm, 'der'));
+    const compensacion = {
+      tronco: inclinacionTronco(lm),
+      hombro: elevacionHombro(lm, ladoRef.current),
+    };
 
     const previo = contador.current;
-    const nuevo = avanzar(previo, activo, sim, ahora);
+    const nuevo = avanzar(previo, activo, sim, ahora, compensacion);
     contador.current = nuevo;
 
     if (nuevo.reps !== previo.reps) setReps(nuevo.reps);
@@ -194,9 +204,11 @@ function PantallaSesion() {
     const duracionS = (Date.now() - inicioMs.current) / 1000;
     const sesion = {
       ejercicio: EJERCICIO,
+      lado_afectado: lado,
       dolor_pre: dolorPre,
       dolor_post: dolorPost,
       sintomas: sintoma.trim() ? [sintoma.trim()] : [],
+      signos_alarma: signos,
       ...resumirSesion(contador.current, duracionS),
     };
 
@@ -218,22 +230,28 @@ function PantallaSesion() {
     setDolorPre(null);
     setDolorPost(null);
     setSintoma('');
+    setSignos([]);
     setEtapa('inicio');
   };
 
   if (etapa === 'inicio') {
-    return <PantallaInicio onComenzar={() => setEtapa('dolor_pre')} />;
+    return (
+      <PantallaInicio
+        onComenzar={(l) => {
+          setLado(l);
+          ladoRef.current = l === 'izquierdo' ? 'izq' : 'der';
+          setEtapa('dolor_pre');
+        }}
+      />
+    );
   }
 
   if (etapa === 'dolor_pre') {
     return (
       <ScrollView contentContainerStyle={s.pantalla}>
         <Text style={s.titulo}>Antes de empezar</Text>
-        <Text style={s.parrafo}>
-          ¿Cuánto dolor sientes ahora en el hombro? Cero es nada, diez es el peor dolor que
-          hayas sentido.
-        </Text>
-        <EscalaDolor valor={dolorPre} onChange={setDolorPre} />
+        <Text style={s.parrafo}>¿Cuánto dolor sientes ahora en el hombro afectado?</Text>
+        <CarasDolor valor={dolorPre} onChange={setDolorPre} />
         <Boton titulo="Estoy listo" onPress={comenzar} deshabilitado={dolorPre === null} />
         <Boton
           titulo="Volver" variante="secundario" estilo={{ marginTop: 12 }}
@@ -279,7 +297,29 @@ function PantallaSesion() {
         <Text style={s.titulo}>Terminaste</Text>
         <Text style={s.grande}>{reps} repeticiones</Text>
         <Text style={s.parrafo}>¿Cuánto dolor sientes ahora?</Text>
-        <EscalaDolor valor={dolorPost} onChange={setDolorPost} />
+        <CarasDolor valor={dolorPost} onChange={setDolorPost} />
+
+        <View style={s.separador} />
+
+        <Text style={s.tituloChico}>¿Te pasó alguna de estas cosas hoy?</Text>
+        <Text style={s.parrafoSuave}>
+          Marca solo lo que sí te pasó. Si no te pasó ninguna, sigue sin marcar nada.
+        </Text>
+        <TamizajeSignos
+          marcados={signos}
+          onToggle={(c) =>
+            setSignos((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
+          }
+        />
+
+        {signos.length > 0 && (
+          <View style={s.urgencia}>
+            <Text style={s.urgenciaTexto}>
+              Lo que marcaste necesita atención hoy. Al continuar avisaremos a tu kinesiólogo.
+            </Text>
+          </View>
+        )}
+
         <TextInput
           style={s.input} placeholder="¿Sentiste algo más? (opcional)"
           placeholderTextColor={C.textoSuave} value={sintoma} onChangeText={setSintoma}
@@ -331,14 +371,17 @@ function PantallaSesion() {
  * hacen ni qué viene después. Acá primero se le dice quién es, cómo va y qué
  * le toca hoy — y recién entonces se le pide algo.
  */
-function PantallaInicio({ onComenzar }: { onComenzar: () => void }) {
+function PantallaInicio({ onComenzar }: { onComenzar: (lado: LadoAfectado) => void }) {
   const [estado, setEstado] = useState<EstadoPersona | null>(null);
+  const [lado, setLado] = useState<LadoAfectado | null>(null);
   const [refrescando, setRefrescando] = useState(false);
   const ej = EJERCICIO_DE_HOY;
 
   const cargar = useCallback(async () => {
     try {
-      setEstado(await cargarEstado());
+      const e = await cargarEstado();
+      setEstado(e);
+      setLado((prev) => prev ?? e.ladoAfectado);
     } catch {
       setEstado(null);
     }
@@ -429,7 +472,32 @@ function PantallaInicio({ onComenzar }: { onComenzar: () => void }) {
         </Text>
       </View>
 
-      <Boton titulo={hechoHoy ? 'Hacer otra sesión' : 'Comenzar mi sesión'} onPress={onComenzar} />
+      {/* El lado con secuela se pregunta antes de medir. Sin esto la app medía
+          siempre el derecho, que en una hemiparesia es la mitad de las veces el
+          brazo sano. */}
+      <View style={s.tarjetaPlan}>
+        <Text style={s.etiquetaPlan}>¿Cuál es tu brazo afectado?</Text>
+        <Text style={s.parrafoSuave}>
+          Es el que vamos a medir. Si no estás seguro, pregúntale a tu kinesiólogo.
+        </Text>
+        <SelectorLado
+          valor={lado}
+          onChange={(l) => {
+            setLado(l);
+            void guardarLadoAfectado(l);
+          }}
+        />
+      </View>
+
+      <Boton
+        titulo={
+          !lado ? 'Elige tu brazo afectado'
+          : hechoHoy ? 'Hacer otra sesión'
+          : 'Comenzar mi sesión'
+        }
+        deshabilitado={!lado}
+        onPress={() => lado && onComenzar(lado)}
+      />
 
       <Text style={s.letraChica}>
         El video no sale de tu teléfono. Solo se guardan los números de tu movimiento, y los ve
@@ -444,24 +512,6 @@ function Metrica({ valor, etiqueta }: { valor: string; etiqueta: string }) {
     <View style={s.metrica}>
       <Text style={s.metricaValor}>{valor}</Text>
       <Text style={s.metricaEtiqueta}>{etiqueta}</Text>
-    </View>
-  );
-}
-
-function EscalaDolor({ valor, onChange }: { valor: number | null; onChange: (n: number) => void }) {
-  const numeros = useMemo(() => Array.from({ length: 11 }, (_, i) => i), []);
-  return (
-    <View style={s.escala}>
-      {numeros.map((n) => (
-        <View key={n} style={[s.celda, valor === n && { backgroundColor: C.electrico }]}>
-          <Text
-            onPress={() => onChange(n)}
-            style={[s.celdaTexto, valor === n && { color: C.blanco }]}
-          >
-            {n}
-          </Text>
-        </View>
-      ))}
     </View>
   );
 }
@@ -561,6 +611,7 @@ const s = StyleSheet.create({
     marginTop: (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0) + 8,
     marginBottom: 4,
   },
+  tituloChico: { fontSize: 19, fontWeight: '800', color: C.marino, marginTop: 4 },
   saludoChico: { fontSize: 17, color: C.textoSuave, marginTop: 8 },
   parrafoSuave: { fontSize: 15, color: C.textoSuave },
   tarjetaMeta: {

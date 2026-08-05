@@ -10,9 +10,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { supabase } from "./supabase";
-import type { Paciente, Riesgo } from "./kineview-data";
+import type { Paciente as PacienteBase, Riesgo } from "./kineview-data";
 
-export type { Paciente, Riesgo };
+export type { Riesgo };
+
+/** El tipo de la maqueta, más lo que la cola necesita para ordenarse bien. */
+export type Paciente = PacienteBase & {
+  puntaje: number | null;
+  /** Timestamp de la alerta abierta más antigua. Desempata la cola. */
+  alertaDesde: number | null;
+};
 
 /** El agente habla en verde/ámbar/rojo; la UI de Paulina en bajo/medio/alto. */
 const RIESGO: Record<string, Riesgo> = {
@@ -97,7 +104,7 @@ export async function cargarPacientes(): Promise<Paciente[]> {
   const ids = (vinculos ?? []).map((v: any) => v.patient_id);
   if (ids.length === 0) return [];
 
-  const [{ data: sesiones }, { data: alertas }] = await Promise.all([
+  const [{ data: sesiones }, { data: alertas }, { data: informes }] = await Promise.all([
     supabase
       .from("sessions")
       .select("patient_id, created_at, days_since_discharge, rom_avg_deg, exercise_key")
@@ -107,6 +114,12 @@ export async function cargarPacientes(): Promise<Paciente[]> {
     supabase
       .from("alerts")
       .select("id, patient_id, level, title, reasons, red_flags, status, contact_within, created_at")
+      .in("patient_id", ids)
+      .order("created_at", { ascending: false })
+      .limit(200),
+    supabase
+      .from("coach_reports")
+      .select("patient_id, risk_score, triage_level, created_at")
       .in("patient_id", ids)
       .order("created_at", { ascending: false })
       .limit(200),
@@ -124,6 +137,9 @@ export async function cargarPacientes(): Promise<Paciente[]> {
 
   const sesionesDe = porPaciente<FilaSesion>(sesiones as FilaSesion[] | null);
   const alertasDe = porPaciente<FilaAlerta>(alertas as FilaAlerta[] | null);
+  const informesDe = porPaciente<{ patient_id: string; risk_score: number }>(
+    informes as { patient_id: string; risk_score: number }[] | null,
+  );
 
   const pacientes: Paciente[] = (vinculos ?? []).map((v: any) => {
     const perfil = Array.isArray(v.profiles) ? v.profiles[0] : v.profiles;
@@ -145,7 +161,11 @@ export async function cargarPacientes(): Promise<Paciente[]> {
       adherenciaSemana: adherencia7d(ss),
       riesgo: peor ? (RIESGO[peor.level] ?? "bajo") : "bajo",
       ultimaAlerta: aa[0]?.title ?? "Sin alertas del agente.",
+      puntaje: informesDe.get(v.patient_id)?.[0]?.risk_score ?? null,
       serie: serieSemanal(ss),
+      alertaDesde: abiertas.length
+        ? Math.min(...abiertas.map((a) => new Date(a.created_at).getTime()))
+        : null,
       alertas: aa.slice(0, 6).map((a) => ({
         titulo: a.title,
         explicacion: [...(a.red_flags ?? []), ...(a.reasons ?? [])].join(" · "),
@@ -155,7 +175,22 @@ export async function cargarPacientes(): Promise<Paciente[]> {
     };
   });
 
-  return pacientes.sort((a, b) => ORDEN[a.riesgo] - ORDEN[b.riesgo]);
+  // ORDEN DE LA COLA — la pregunta de Paulina, respondida en tres niveles:
+  //
+  //   1. Nivel de triaje (rojo > ámbar > verde). Es la decisión clínica del
+  //      agente y manda sobre todo lo demás.
+  //   2. Puntaje 0-100 dentro del mismo nivel. Dos pacientes en ámbar no son
+  //      iguales: uno de 70 va antes que uno de 30.
+  //   3. Antigüedad de la alerta. A igual nivel y puntaje, primero la que
+  //      lleva más tiempo esperando revisión — si no, un caso estable pero
+  //      olvidado se hunde para siempre bajo los casos nuevos.
+  return pacientes.sort((a, b) => {
+    const porNivel = ORDEN[a.riesgo] - ORDEN[b.riesgo];
+    if (porNivel !== 0) return porNivel;
+    const porPuntaje = (b.puntaje ?? 0) - (a.puntaje ?? 0);
+    if (porPuntaje !== 0) return porPuntaje;
+    return (a.alertaDesde ?? 0) - (b.alertaDesde ?? 0);
+  });
 }
 
 /**

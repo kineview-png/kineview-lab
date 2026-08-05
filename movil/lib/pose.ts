@@ -81,6 +81,65 @@ export function simetria(izq: number | null, der: number | null): number | null 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Compensaciones
+//
+// Pregunta de Paulina: "¿cómo se medirán las compensaciones?". Hasta ahora solo
+// se medía la SIMETRÍA entre lados, que detecta que el brazo sano hace más —
+// pero no ve las dos compensaciones que un kinesiólogo busca de verdad cuando
+// alguien post-ACV eleva el hombro:
+//
+//   1. Inclinación del tronco: la persona se ladea para "ganar" grados en vez
+//      de moverlos desde el hombro.
+//   2. Elevación escapular: sube el hombro hacia la oreja para alcanzar más.
+//
+// Las dos se calculan con los 33 puntos que ya tenemos, sin nada nuevo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inclinación lateral del tronco en grados respecto de la vertical.
+ * 0° es tronco derecho. Se mide entre el punto medio de las caderas y el punto
+ * medio de los hombros.
+ */
+export function inclinacionTronco(lm: Landmark[]): number | null {
+  const hi = lm[PUNTO.hombroIzq], hd = lm[PUNTO.hombroDer];
+  const ci = lm[PUNTO.caderaIzq], cd = lm[PUNTO.caderaDer];
+  if (!esVisible(hi) || !esVisible(hd) || !esVisible(ci) || !esVisible(cd)) return null;
+
+  const hx = (hi.x + hd.x) / 2, hy = (hi.y + hd.y) / 2;
+  const cx = (ci.x + cd.x) / 2, cy = (ci.y + cd.y) / 2;
+
+  const dx = hx - cx;
+  const dy = cy - hy; // y crece hacia abajo en coordenadas de imagen
+  if (Math.abs(dy) < 1e-6) return null;
+
+  return Math.abs((Math.atan2(dx, dy) * 180) / Math.PI);
+}
+
+/**
+ * Elevación del hombro que trabaja respecto del otro, en grados de desnivel de
+ * la línea de hombros. Positivo = el hombro activo está más alto que el
+ * contrario, que es el patrón de "encogerse" para alcanzar.
+ */
+export function elevacionHombro(lm: Landmark[], lado: 'izq' | 'der'): number | null {
+  const hi = lm[PUNTO.hombroIzq], hd = lm[PUNTO.hombroDer];
+  if (!esVisible(hi) || !esVisible(hd)) return null;
+
+  const activo = lado === 'izq' ? hi : hd;
+  const otro = lado === 'izq' ? hd : hi;
+
+  const dx = Math.abs(hd.x - hi.x);
+  if (dx < 1e-6) return null;
+
+  // Cuánto más arriba está el activo (y menor = más arriba en la imagen).
+  const dy = otro.y - activo.y;
+  return (Math.atan2(dy, dx) * 180) / Math.PI;
+}
+
+/** Umbrales por sobre los cuales el movimiento se considera compensado. */
+export const TRONCO_MAX_GRADOS = 12;
+export const HOMBRO_MAX_GRADOS = 8;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Contador de repeticiones
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -116,6 +175,10 @@ export type MetricaRep = {
   /** Segundos que la persona sostuvo el brazo arriba. Es el trabajo real. */
   sosten_s: number;
   simetria_pct: number | null;
+  /** Inclinación máxima del tronco durante la repetición, en grados. */
+  tronco_deg: number | null;
+  /** Elevación máxima del hombro que trabaja, en grados. */
+  hombro_deg: number | null;
 };
 
 export type EstadoContador = {
@@ -128,6 +191,10 @@ export type EstadoContador = {
   msSostenido: number;
   /** Marca de tiempo de la muestra anterior, para acumular el sostén. */
   ultimaMuestraMs: number | null;
+  /** Peor inclinación de tronco vista en la repetición en curso. */
+  troncoMax: number;
+  /** Peor elevación de hombro vista en la repetición en curso. */
+  hombroMax: number;
   simetriasRep: number[];
   metricas: MetricaRep[];
 };
@@ -140,6 +207,8 @@ export function estadoInicial(): EstadoContador {
     inicioRepMs: null,
     msSostenido: 0,
     ultimaMuestraMs: null,
+    troncoMax: 0,
+    hombroMax: 0,
     simetriasRep: [],
     metricas: [],
   };
@@ -157,11 +226,17 @@ export function avanzar(
   anguloActivo: number | null,
   sim: number | null,
   ahoraMs: number,
+  compensacion: { tronco: number | null; hombro: number | null } = { tronco: null, hombro: null },
 ): EstadoContador {
   if (anguloActivo === null) return estado;
 
   const romActual = Math.max(estado.romActual, anguloActivo);
   const simetriasRep = sim === null ? estado.simetriasRep : [...estado.simetriasRep, sim];
+  // Se guarda el PEOR valor de la repetición, no el promedio: una compensación
+  // que aparece solo al final igual es una compensación, y promediarla la
+  // esconde.
+  const troncoMax = Math.max(estado.troncoMax, compensacion.tronco ?? 0);
+  const hombroMax = Math.max(estado.hombroMax, compensacion.hombro ?? 0);
 
   // El sostén se acumula muestra a muestra, no se estima al final: así el
   // número que ve la persona en pantalla es el mismo que decide si la
@@ -173,7 +248,7 @@ export function avanzar(
     ? estado.msSostenido + delta
     : estado.msSostenido;
 
-  const base = { ...estado, romActual, simetriasRep, msSostenido, ultimaMuestraMs: ahoraMs };
+  const base = { ...estado, romActual, simetriasRep, msSostenido, ultimaMuestraMs: ahoraMs, troncoMax, hombroMax };
 
   // Empieza a subir: arranca el cronómetro de la repetición.
   if (estado.fase === 'abajo' && anguloActivo >= UMBRAL_ARRIBA) {
@@ -196,6 +271,8 @@ export function avanzar(
         romActual: 0,
         inicioRepMs: null,
         msSostenido: 0,
+        troncoMax: 0,
+        hombroMax: 0,
         simetriasRep: [],
       };
     }
@@ -212,6 +289,8 @@ export function avanzar(
       romActual: 0,
       inicioRepMs: null,
       msSostenido: 0,
+      troncoMax: 0,
+      hombroMax: 0,
       simetriasRep: [],
       // Tope de 60: es el máximo que acepta el backend, y mandar más sería
       // enviarle al modelo ruido que no puede usar.
@@ -223,6 +302,8 @@ export function avanzar(
             tiempo_s: Math.round((duracionMs / 1000) * 10) / 10,
             sosten_s: Math.round((msSostenido / 1000) * 10) / 10,
             simetria_pct: promedioSim === null ? null : Math.round(promedioSim * 10) / 10,
+            tronco_deg: Math.round(troncoMax * 10) / 10,
+            hombro_deg: Math.round(hombroMax * 10) / 10,
           }],
     };
   }
@@ -242,9 +323,17 @@ export function resumirSesion(estado: EstadoContador, duracionS: number) {
   const promedio = (xs: number[]) =>
     xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null;
 
+  const troncos = estado.metricas.map((m) => m.tronco_deg).filter((x): x is number => x !== null);
+  const hombros = estado.metricas.map((m) => m.hombro_deg).filter((x): x is number => x !== null);
+
   return {
     reps: estado.reps,
     rom_promedio_deg: promedio(roms),
+    tronco_max_deg: troncos.length ? Math.max(...troncos) : null,
+    hombro_max_deg: hombros.length ? Math.max(...hombros) : null,
+    reps_compensadas: estado.metricas.filter(
+      (m) => (m.tronco_deg ?? 0) > TRONCO_MAX_GRADOS || (m.hombro_deg ?? 0) > HOMBRO_MAX_GRADOS,
+    ).length,
     rom_max_deg: roms.length ? Math.max(...roms) : null,
     simetria_pct: promedio(sims),
     tiempo_bajo_tension_s: Math.round(estado.metricas.reduce((a, m) => a + m.tiempo_s, 0) * 10) / 10,
