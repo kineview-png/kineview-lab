@@ -31,11 +31,7 @@ export const EJERCICIO_DE_HOY: Ejercicio = {
   // grados. A nadie le importa recuperar 30° de rango; le importa poder
   // vestirse solo. El ejercicio es el medio, la autonomía es el fin, y decirlo
   // así es lo que sostiene la adherencia un martes a las 8 de la mañana.
-  porQue:
-    'Para que tu brazo afectado vuelva a servirte en el día a día: peinarte, ' +
-    'vestirte, alcanzar un vaso de la repisa, sostenerte al levantarte. Cada ' +
-    'sesión recupera un poco del movimiento que necesitas para valerte por ti ' +
-    'mismo.',
+  porQue: 'Para volver a peinarte, vestirte y alcanzar cosas tú mismo.',
   repsSugeridas: 10,
   segundosSosten: 3,
 };

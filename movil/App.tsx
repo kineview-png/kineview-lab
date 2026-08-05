@@ -26,6 +26,8 @@ import { Boton } from './components/Boton';
 import { Esqueleto } from './components/Esqueleto';
 import { Logo } from './components/Logo';
 import { CarasDolor, SelectorLado, TamizajeSignos, type ClaveSigno } from './components/Clinico';
+import { DemoEjercicio } from './components/DemoEjercicio';
+import { callar, decirInstruccionInicial, decirRepeticion, hablar } from './lib/voz';
 import { C, R } from './lib/theme';
 import { supabase } from './lib/supabase';
 import { dispararTriaje, pedirFeedback, type Feedback } from './lib/coach';
@@ -133,11 +135,15 @@ function PantallaSesion() {
   const ultimoPintado = useRef(0);
 
   const [reps, setReps] = useState(0);
-  const [romVivo, setRomVivo] = useState<number | null>(null);
-  // Cuánto le falta de sostén para que la repetición cuente. Sin esto el
-  // requisito de 3 s es invisible: la persona solo descubre que no contó.
-  const [sostenFalta, setSostenFalta] = useState<number | null>(null);
-  const [puntos, setPuntos] = useState<{ x: number; y: number }[]>([]);
+  // Un solo objeto de estado para todo lo que se repinta con la cámara. Antes
+  // eran tres setState por cuadro pintado: tres reconciliaciones de React
+  // encima del pipeline de video, que es justo lo que hacía sentir lenta la
+  // revisión.
+  const [hud, setHud] = useState<{
+    rom: number | null;
+    sostenFalta: number | null;
+    puntos: { x: number; y: number }[];
+  }>({ rom: null, sostenFalta: null, puntos: [] });
 
   const onResults = useCallback((res: PoseDetectionResultBundle, vc: any) => {
     const lm = res.results?.[0]?.landmarks?.[0] as Landmark[] | undefined;
@@ -155,22 +161,36 @@ function PantallaSesion() {
     const nuevo = avanzar(previo, activo, sim, ahora, compensacion);
     contador.current = nuevo;
 
-    if (nuevo.reps !== previo.reps) setReps(nuevo.reps);
+    if (nuevo.reps !== previo.reps) {
+      setReps(nuevo.reps);
+      decirRepeticion(nuevo.reps);
+    }
 
-    // El esqueleto se repinta a ~12 fps. Se ve fluido y evita 30 setState por
-    // segundo sobre 33 vistas.
-    if (ahora - ultimoPintado.current > 80) {
+    // Avisa al llegar arriba y cuenta el sostén. La persona está mirando su
+    // brazo, no el teléfono: si esto solo se escribiera en pantalla, no
+    // llegaría.
+    if (previo.fase === 'abajo' && nuevo.fase === 'arriba') {
+      hablar('Mantén arriba', { interrumpe: true, minMs: 2000 });
+    }
+
+    // ~10 repintados por segundo. El conteo sigue corriendo a la velocidad de
+    // los cuadros; lo que se limita es el dibujo, que es lo caro.
+    if (ahora - ultimoPintado.current > 100) {
       ultimoPintado.current = ahora;
-      setRomVivo(activo === null ? null : Math.round(activo));
-      setSostenFalta(nuevo.fase === 'arriba' ? sostenRestanteS(nuevo) : null);
+      let puntos: { x: number; y: number }[] = [];
       try {
         // convertPoint ya aplica rotación y espejo de la cámara frontal.
         // NO aplicar x = 1 - x a mano: se rota el esqueleto 90°.
         const dims = vc.getFrameDims(res);
-        setPuntos(lm.map((p) => vc.convertPoint(dims, { x: p.x, y: p.y })));
+        puntos = lm.map((p) => vc.convertPoint(dims, { x: p.x, y: p.y }));
       } catch {
-        setPuntos([]);
+        puntos = [];
       }
+      setHud({
+        rom: activo === null ? null : Math.round(activo),
+        sostenFalta: nuevo.fase === 'arriba' ? sostenRestanteS(nuevo) : null,
+        puntos,
+      });
     }
   }, []);
 
@@ -191,11 +211,11 @@ function PantallaSesion() {
   }, []);
 
   const comenzar = () => {
+    if (lado) decirInstruccionInicial(lado);
     contador.current = estadoInicial();
     inicioMs.current = Date.now();
     setReps(0);
-    setPuntos([]);
-    setSostenFalta(null);
+    setHud({ rom: null, sostenFalta: null, puntos: [] });
     setEtapa('midiendo');
   };
 
@@ -220,7 +240,13 @@ function PantallaSesion() {
       setFeedback(fb);
       setEtapa('feedback');
     } catch (e: any) {
-      Alert.alert('No pudimos analizar la sesión', e?.message ?? 'Intenta de nuevo.');
+      const esDeRed = /failed to send|network|fetch|timeout/i.test(e?.message ?? '');
+      Alert.alert(
+        esDeRed ? 'Sin conexión' : 'No pudimos analizar la sesión',
+        esDeRed
+          ? 'Tu sesión quedó guardada. Revisa tu conexión y toca "Ver mi resultado" de nuevo.'
+          : (e?.message ?? 'Intenta de nuevo.'),
+      );
       setEtapa('dolor_post');
     }
   };
@@ -271,21 +297,28 @@ function PantallaSesion() {
         />
         {/* El esqueleto: 33 puntos y 30 huesos dibujados sobre la cámara. Lo
             que la persona ve es literalmente lo que la app está midiendo. */}
-        <Esqueleto puntos={puntos} />
+        <Esqueleto puntos={hud.puntos} />
         <View style={s.hud} pointerEvents="none">
           <Text style={s.hudReps}>{reps}</Text>
           <Text style={s.hudEtiqueta}>repeticiones</Text>
-          {romVivo !== null && <Text style={s.hudRom}>{romVivo}°</Text>}
+          {hud.rom !== null && <Text style={s.hudRom}>{hud.rom}°</Text>}
         </View>
-        {sostenFalta !== null && (
+        {hud.sostenFalta !== null && (
           <View style={s.avisoSosten} pointerEvents="none">
             <Text style={s.avisoSostenTexto}>
-              {sostenFalta > 0 ? `Mantén arriba… ${sostenFalta}` : '¡Ya! Baja despacio'}
+              {hud.sostenFalta > 0 ? `Mantén arriba… ${hud.sostenFalta}` : '¡Ya! Baja despacio'}
             </Text>
           </View>
         )}
         <View style={s.barraInferior}>
-          <Boton titulo="Terminar sesión" variante="peligro" onPress={() => setEtapa('dolor_post')} />
+          <Boton
+            titulo="Terminar sesión"
+            variante="peligro"
+            onPress={() => {
+              callar();
+              setEtapa('dolor_post');
+            }}
+          />
         </View>
       </View>
     );
@@ -375,6 +408,7 @@ function PantallaInicio({ onComenzar }: { onComenzar: (lado: LadoAfectado) => vo
   const [estado, setEstado] = useState<EstadoPersona | null>(null);
   const [lado, setLado] = useState<LadoAfectado | null>(null);
   const [refrescando, setRefrescando] = useState(false);
+  const [detalle, setDetalle] = useState(false);
   const ej = EJERCICIO_DE_HOY;
 
   const cargar = useCallback(async () => {
@@ -446,30 +480,28 @@ function PantallaInicio({ onComenzar }: { onComenzar: (lado: LadoAfectado) => vo
         </Text>
       )}
 
+      {/* La animación enseña el movimiento y su ritmo. Reemplaza tres párrafos
+          que el usuario real —una persona mayor, a veces con secuelas de
+          lenguaje— no iba a leer. */}
       <View style={s.tarjetaPlan}>
         <Text style={s.etiquetaPlan}>Tu ejercicio de hoy</Text>
         <Text style={s.nombreEjercicio}>{ej.nombre}</Text>
-        <Text style={s.parrafo}>{ej.comoSeHace}</Text>
 
-        <View style={s.separador} />
-
-        <Text style={s.etiquetaPlan}>Para qué sirve</Text>
-        <Text style={s.parrafo}>{ej.porQue}</Text>
-
-        <View style={s.separador} />
+        <DemoEjercicio lado={lado ?? 'derecho'} />
 
         <View style={s.filaDato}>
           <Text style={s.datoGrande}>{ej.repsSugeridas}</Text>
-          <Text style={s.datoTexto}>repeticiones</Text>
+          <Text style={s.datoTexto}>veces</Text>
           <Text style={s.datoGrande}>{ej.segundosSosten}s</Text>
-          <Text style={s.datoTexto}>arriba en cada una</Text>
+          <Text style={s.datoTexto}>arriba cada vez</Text>
         </View>
 
-        <Text style={s.parrafo}>
-          Siéntate frente a la cámara de modo que se te vea de la cintura para arriba. La app
-          cuenta sola: <Text style={s.negrita}>sube el brazo, cuenta hasta tres arriba, y baja
-          despacio</Text>.
+        <Text style={s.parrafoSuave}>{ej.porQue}</Text>
+
+        <Text style={s.verMas} onPress={() => setDetalle((v: boolean) => !v)}>
+          {detalle ? 'Ocultar indicaciones' : 'Ver indicaciones'}
         </Text>
+        {detalle && <Text style={s.parrafo}>{ej.comoSeHace}</Text>}
       </View>
 
       {/* El lado con secuela se pregunta antes de medir. Sin esto la app medía
@@ -610,6 +642,9 @@ const s = StyleSheet.create({
     // encabezado quedaba pegado al borde y tapado por la hora y la señal.
     marginTop: (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0) + 8,
     marginBottom: 4,
+  },
+  verMas: {
+    fontSize: 15, fontWeight: '700', color: C.electrico, paddingVertical: 6,
   },
   tituloChico: { fontSize: 19, fontWeight: '800', color: C.marino, marginTop: 4 },
   saludoChico: { fontSize: 17, color: C.textoSuave, marginTop: 8 },
