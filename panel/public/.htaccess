@@ -1,0 +1,34 @@
+# app.kineview.cl/panel/ — panel del kinesiólogo (SPA sobre Apache)
+#
+# La raíz del dominio es el sitio público; este .htaccess solo gobierna /panel/.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /panel/
+
+  # Los archivos y carpetas que existen se sirven tal cual.
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Todo lo demás cae en la SPA: `/panel/paciente/<id>` la resuelve el router
+  # en el navegador, así que recargar esa página no puede dar 404.
+  RewriteRule . /panel/index.html [L]
+</IfModule>
+
+# Este panel muestra información clínica. No se indexa.
+<IfModule mod_headers.c>
+  Header set X-Robots-Tag "noindex, nofollow"
+  Header set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set X-Frame-Options "SAMEORIGIN"
+</IfModule>
+
+# Los assets llevan hash en el nombre: inmutables. El HTML nunca se cachea, o
+# un despliegue no se vería hasta que al navegador se le antoje.
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/html "access plus 0 seconds"
+  ExpiresByType text/css "access plus 1 year"
+  ExpiresByType application/javascript "access plus 1 year"
+</IfModule>

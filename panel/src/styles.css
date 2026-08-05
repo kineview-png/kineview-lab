@@ -1,0 +1,142 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * KineView design system.
+ * Aplicación blanca: fondo #FFFFFF, secciones con tinte hielo #F2F8FD.
+ * Azul marino para títulos, azul eléctrico para acciones, cyan para acentos.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-ice: var(--ice);
+  --color-navy: var(--navy);
+  --color-electric: var(--electric);
+  --color-cyan: var(--cyan);
+  --color-risk-high: var(--risk-high);
+  --color-risk-mid: var(--risk-mid);
+  --color-risk-low: var(--risk-low);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --shadow-clinic: 0 1px 2px oklch(0.28 0.12 264 / 6%), 0 8px 24px -12px oklch(0.28 0.12 264 / 18%);
+  --shadow-glow: 0 0 0 1px oklch(0.78 0.14 220 / 35%), 0 10px 30px -14px oklch(0.7 0.16 230 / 45%);
+}
+
+:root {
+  --radius: 1rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.3 0.12 268);
+
+  --ice: oklch(0.972 0.014 240);
+  --navy: oklch(0.322 0.146 268.5);
+  --electric: oklch(0.641 0.181 254.4);
+  --cyan: oklch(0.79 0.148 214);
+
+  --risk-high: oklch(0.577 0.22 27);
+  --risk-mid: oklch(0.75 0.16 75);
+  --risk-low: oklch(0.63 0.15 152);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.3 0.12 268);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.3 0.12 268);
+  --primary: var(--electric);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: var(--ice);
+  --secondary-foreground: var(--navy);
+  --muted: var(--ice);
+  --muted-foreground: oklch(0.53 0.045 258);
+  --accent: oklch(0.94 0.04 220);
+  --accent-foreground: var(--navy);
+  --destructive: var(--risk-high);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.915 0.018 240);
+  --input: oklch(0.915 0.018 240);
+  --ring: var(--electric);
+  --chart-1: var(--electric);
+  --chart-2: var(--cyan);
+  --chart-3: var(--navy);
+  --chart-4: var(--risk-mid);
+  --chart-5: var(--risk-low);
+  --sidebar: var(--ice);
+  --sidebar-foreground: var(--navy);
+  --sidebar-primary: var(--electric);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.94 0.04 220);
+  --sidebar-accent-foreground: var(--navy);
+  --sidebar-border: oklch(0.915 0.018 240);
+  --sidebar-ring: var(--electric);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--navy);
+    letter-spacing: -0.015em;
+  }
+}
+
+@utility surface-ice {
+  background-color: var(--ice);
+}
+
+@utility card-clinic {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-clinic);
+}

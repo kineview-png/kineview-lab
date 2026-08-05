@@ -27,6 +27,13 @@ export const RepMetric = z.object({
   n: z.number().int().min(1),
   rom_deg: z.number().min(0).max(360),
   tiempo_s: z.number().min(0).max(120),
+  /**
+   * Segundos que la persona SOSTUVO el brazo en el rango alto. Es el criterio
+   * clínico que hace válida la repetición: lo que rehabilita es el trabajo
+   * isométrico arriba, no el recorrido. Una repetición con `tiempo_s` alto y
+   * `sosten_s` bajo es un movimiento balístico, no terapia.
+   */
+  sosten_s: z.number().min(0).max(120).nullable().default(null),
   simetria_pct: z.number().min(0).max(100).nullable().default(null),
 });
 

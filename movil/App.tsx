@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, SafeAreaView,
-  ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
+  RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import {
@@ -23,18 +23,24 @@ import {
 import type { Session } from '@supabase/supabase-js';
 
 import { Boton } from './components/Boton';
+import { Esqueleto } from './components/Esqueleto';
+import { Logo } from './components/Logo';
 import { C, R } from './lib/theme';
 import { supabase } from './lib/supabase';
 import { dispararTriaje, pedirFeedback, type Feedback } from './lib/coach';
 import {
-  avanzar, estadoInicial, flexionHombro, resumirSesion, simetria,
+  avanzar, estadoInicial, flexionHombro, resumirSesion, simetria, sostenRestanteS,
   type EstadoContador, type Landmark,
 } from './lib/pose';
+import {
+  cargarEstado, cuandoFue, EJERCICIO_DE_HOY, META_DIARIA, saludoPorHora,
+  type EstadoPersona,
+} from './lib/plan';
 
 const EJERCICIO = 'flexion_hombro_sentado';
 const LADO_ACTIVO: 'izq' | 'der' = 'der';
 
-type Etapa = 'dolor_pre' | 'midiendo' | 'dolor_post' | 'enviando' | 'feedback';
+type Etapa = 'inicio' | 'dolor_pre' | 'midiendo' | 'dolor_post' | 'enviando' | 'feedback';
 
 export default function App() {
   const [sesionAuth, setSesionAuth] = useState<Session | null>(null);
@@ -87,7 +93,7 @@ function PantallaEntrar() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={s.pantalla}
     >
-      <Text style={s.marca}>KineView</Text>
+      <Logo tamano={46} />
       <Text style={s.subtitulo}>Tu rehabilitación, acompañada todos los días.</Text>
 
       <TextInput
@@ -107,7 +113,7 @@ function PantallaEntrar() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PantallaSesion() {
-  const [etapa, setEtapa] = useState<Etapa>('dolor_pre');
+  const [etapa, setEtapa] = useState<Etapa>('inicio');
   const [dolorPre, setDolorPre] = useState<number | null>(null);
   const [dolorPost, setDolorPost] = useState<number | null>(null);
   const [sintoma, setSintoma] = useState('');
@@ -122,6 +128,9 @@ function PantallaSesion() {
 
   const [reps, setReps] = useState(0);
   const [romVivo, setRomVivo] = useState<number | null>(null);
+  // Cuánto le falta de sostén para que la repetición cuente. Sin esto el
+  // requisito de 3 s es invisible: la persona solo descubre que no contó.
+  const [sostenFalta, setSostenFalta] = useState<number | null>(null);
   const [puntos, setPuntos] = useState<{ x: number; y: number }[]>([]);
 
   const onResults = useCallback((res: PoseDetectionResultBundle, vc: any) => {
@@ -143,6 +152,7 @@ function PantallaSesion() {
     if (ahora - ultimoPintado.current > 80) {
       ultimoPintado.current = ahora;
       setRomVivo(activo === null ? null : Math.round(activo));
+      setSostenFalta(nuevo.fase === 'arriba' ? sostenRestanteS(nuevo) : null);
       try {
         // convertPoint ya aplica rotación y espejo de la cámara frontal.
         // NO aplicar x = 1 - x a mano: se rota el esqueleto 90°.
@@ -175,6 +185,7 @@ function PantallaSesion() {
     inicioMs.current = Date.now();
     setReps(0);
     setPuntos([]);
+    setSostenFalta(null);
     setEtapa('midiendo');
   };
 
@@ -207,20 +218,26 @@ function PantallaSesion() {
     setDolorPre(null);
     setDolorPost(null);
     setSintoma('');
-    setEtapa('dolor_pre');
+    setEtapa('inicio');
   };
+
+  if (etapa === 'inicio') {
+    return <PantallaInicio onComenzar={() => setEtapa('dolor_pre')} />;
+  }
 
   if (etapa === 'dolor_pre') {
     return (
       <ScrollView contentContainerStyle={s.pantalla}>
-        <Text style={s.marca}>KineView</Text>
         <Text style={s.titulo}>Antes de empezar</Text>
-        <Text style={s.parrafo}>¿Cuánto dolor sientes ahora en el hombro?</Text>
+        <Text style={s.parrafo}>
+          ¿Cuánto dolor sientes ahora en el hombro? Cero es nada, diez es el peor dolor que
+          hayas sentido.
+        </Text>
         <EscalaDolor valor={dolorPre} onChange={setDolorPre} />
         <Boton titulo="Estoy listo" onPress={comenzar} deshabilitado={dolorPre === null} />
         <Boton
-          titulo="Salir" variante="secundario" estilo={{ marginTop: 12 }}
-          onPress={() => supabase.auth.signOut()}
+          titulo="Volver" variante="secundario" estilo={{ marginTop: 12 }}
+          onPress={() => setEtapa('inicio')}
         />
       </ScrollView>
     );
@@ -234,16 +251,21 @@ function PantallaSesion() {
           solution={pose}
           activeCamera="front"
         />
-        {/* El esqueleto: los 33 puntos dibujados sobre la cámara. Lo que la
-            persona ve es literalmente lo que la app está midiendo. */}
-        {puntos.map((p, i) => (
-          <View key={i} pointerEvents="none" style={[s.punto, { left: p.x - 4, top: p.y - 4 }]} />
-        ))}
+        {/* El esqueleto: 33 puntos y 30 huesos dibujados sobre la cámara. Lo
+            que la persona ve es literalmente lo que la app está midiendo. */}
+        <Esqueleto puntos={puntos} />
         <View style={s.hud} pointerEvents="none">
           <Text style={s.hudReps}>{reps}</Text>
           <Text style={s.hudEtiqueta}>repeticiones</Text>
           {romVivo !== null && <Text style={s.hudRom}>{romVivo}°</Text>}
         </View>
+        {sostenFalta !== null && (
+          <View style={s.avisoSosten} pointerEvents="none">
+            <Text style={s.avisoSostenTexto}>
+              {sostenFalta > 0 ? `Mantén arriba… ${sostenFalta}` : '¡Ya! Baja despacio'}
+            </Text>
+          </View>
+        )}
         <View style={s.barraInferior}>
           <Boton titulo="Terminar sesión" variante="peligro" onPress={() => setEtapa('dolor_post')} />
         </View>
@@ -303,6 +325,129 @@ function PantallaSesion() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Lo primero que ve la persona al abrir. Antes caía directo en la escala de
+ * dolor, que es una pregunta clínica sin contexto: nadie sabe por qué se la
+ * hacen ni qué viene después. Acá primero se le dice quién es, cómo va y qué
+ * le toca hoy — y recién entonces se le pide algo.
+ */
+function PantallaInicio({ onComenzar }: { onComenzar: () => void }) {
+  const [estado, setEstado] = useState<EstadoPersona | null>(null);
+  const [refrescando, setRefrescando] = useState(false);
+  const ej = EJERCICIO_DE_HOY;
+
+  const cargar = useCallback(async () => {
+    try {
+      setEstado(await cargarEstado());
+    } catch {
+      setEstado(null);
+    }
+  }, []);
+
+  useEffect(() => { void cargar(); }, [cargar]);
+
+  const refrescar = useCallback(async () => {
+    setRefrescando(true);
+    await cargar();
+    setRefrescando(false);
+  }, [cargar]);
+
+  const hechoHoy = (estado?.sesionesHoy ?? 0) >= META_DIARIA;
+  const avance = Math.min(1, (estado?.sesionesHoy ?? 0) / META_DIARIA);
+
+  return (
+    <ScrollView
+      contentContainerStyle={[s.pantalla, { justifyContent: 'flex-start', paddingTop: 12 }]}
+      refreshControl={
+        <RefreshControl refreshing={refrescando} onRefresh={refrescar} tintColor={C.electrico} colors={[C.electrico]} />
+      }
+    >
+      <View style={s.encabezado}>
+        <Logo />
+        <Text style={s.salir} onPress={() => supabase.auth.signOut()}>Salir</Text>
+      </View>
+
+      <Text style={s.saludoChico}>{saludoPorHora()}</Text>
+      <Text style={s.saludo}>{estado?.nombre || 'Bienvenido'}</Text>
+
+      {/* La meta del día es lo primero que la persona necesita saber: si ya
+          cumplió o si le falta. El resto es contexto. */}
+      <View style={[s.tarjetaMeta, hechoHoy && { backgroundColor: C.verde }]}>
+        <Text style={[s.metaTitulo, hechoHoy && { color: C.blanco }]}>
+          {hechoHoy ? '¡Listo por hoy!' : 'Tu meta de hoy'}
+        </Text>
+        <Text style={[s.metaTexto, hechoHoy && { color: C.blanco }]}>
+          {hechoHoy
+            ? 'Ya hiciste tu sesión de hoy. Puedes hacer otra si quieres, pero no es necesario.'
+            : 'Una sesión de ejercicios. Toma unos minutos.'}
+        </Text>
+        <View style={[s.barra, hechoHoy && { backgroundColor: 'rgba(255,255,255,0.35)' }]}>
+          <View style={[s.barraLlena, { width: `${avance * 100}%` }, hechoHoy && { backgroundColor: C.blanco }]} />
+        </View>
+      </View>
+
+      {estado && (
+        <View style={s.filaMetricas}>
+          <Metrica
+            valor={estado.racha > 0 ? `🔥 ${estado.racha}` : '—'}
+            etiqueta={estado.racha === 1 ? 'día seguido' : 'días seguidos'}
+          />
+          <Metrica valor={`${estado.sesionesEstaSemana}`} etiqueta="esta semana" />
+          <Metrica valor={`${estado.totalSesiones}`} etiqueta="en total" />
+        </View>
+      )}
+
+      {estado?.ultimaSesion && !hechoHoy && (
+        <Text style={s.parrafoSuave}>
+          Tu última sesión fue {cuandoFue(estado.ultimaSesion).toLowerCase()}.
+        </Text>
+      )}
+
+      <View style={s.tarjetaPlan}>
+        <Text style={s.etiquetaPlan}>Tu ejercicio de hoy</Text>
+        <Text style={s.nombreEjercicio}>{ej.nombre}</Text>
+        <Text style={s.parrafo}>{ej.comoSeHace}</Text>
+
+        <View style={s.separador} />
+
+        <Text style={s.etiquetaPlan}>Para qué sirve</Text>
+        <Text style={s.parrafo}>{ej.porQue}</Text>
+
+        <View style={s.separador} />
+
+        <View style={s.filaDato}>
+          <Text style={s.datoGrande}>{ej.repsSugeridas}</Text>
+          <Text style={s.datoTexto}>repeticiones</Text>
+          <Text style={s.datoGrande}>{ej.segundosSosten}s</Text>
+          <Text style={s.datoTexto}>arriba en cada una</Text>
+        </View>
+
+        <Text style={s.parrafo}>
+          Siéntate frente a la cámara de modo que se te vea de la cintura para arriba. La app
+          cuenta sola: <Text style={s.negrita}>sube el brazo, cuenta hasta tres arriba, y baja
+          despacio</Text>.
+        </Text>
+      </View>
+
+      <Boton titulo={hechoHoy ? 'Hacer otra sesión' : 'Comenzar mi sesión'} onPress={onComenzar} />
+
+      <Text style={s.letraChica}>
+        El video no sale de tu teléfono. Solo se guardan los números de tu movimiento, y los ve
+        tu kinesiólogo.
+      </Text>
+    </ScrollView>
+  );
+}
+
+function Metrica({ valor, etiqueta }: { valor: string; etiqueta: string }) {
+  return (
+    <View style={s.metrica}>
+      <Text style={s.metricaValor}>{valor}</Text>
+      <Text style={s.metricaEtiqueta}>{etiqueta}</Text>
+    </View>
+  );
+}
+
 function EscalaDolor({ valor, onChange }: { valor: number | null; onChange: (n: number) => void }) {
   const numeros = useMemo(() => Array.from({ length: 11 }, (_, i) => i), []);
   return (
@@ -336,7 +481,17 @@ function Tarjeta({ titulo, color, items }: { titulo: string; color: string; item
 
 const s = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: C.fondo },
-  pantalla: { padding: 24, gap: 14, flexGrow: 1, justifyContent: 'center' },
+  pantalla: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    // En Android SafeAreaView no reserva ni la barra de estado ni la de
+    // navegación: sin este colchón el último botón queda pegado al borde y,
+    // en teléfonos con gestos, debajo de la barra del sistema.
+    paddingBottom: 40,
+    gap: 14,
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   centro: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: C.fondo },
   marca: { fontSize: 34, fontWeight: '800', color: C.marino, letterSpacing: -0.5 },
   subtitulo: { fontSize: 16, color: C.textoSuave, marginBottom: 12 },
@@ -365,10 +520,58 @@ const s = StyleSheet.create({
   hudReps: { fontSize: 72, fontWeight: '800', color: C.blanco },
   hudEtiqueta: { fontSize: 15, color: C.blanco, marginTop: -8, opacity: 0.9 },
   hudRom: { fontSize: 22, fontWeight: '700', color: C.cyan, marginTop: 10 },
-  barraInferior: { position: 'absolute', left: 24, right: 24, bottom: 34 },
+  barraInferior: { position: 'absolute', left: 24, right: 24, bottom: 48 },
   tarjeta: { backgroundColor: C.hielo, borderRadius: R, padding: 16, borderLeftWidth: 5, gap: 6 },
   tarjetaTitulo: { fontSize: 15, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
   tarjetaItem: { fontSize: 16, color: C.texto, lineHeight: 23 },
   urgencia: { backgroundColor: C.rojo, borderRadius: R, padding: 18 },
   urgenciaTexto: { color: C.blanco, fontSize: 19, fontWeight: '800', textAlign: 'center' },
+
+  // Pantalla de inicio
+  filaEntre: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  salir: { fontSize: 15, fontWeight: '700', color: C.textoSuave, padding: 8 },
+  saludo: { fontSize: 30, fontWeight: '800', color: C.marino, marginTop: 4 },
+  filaMetricas: { flexDirection: 'row', gap: 10 },
+  metrica: {
+    flex: 1, backgroundColor: C.hielo, borderRadius: R, paddingVertical: 14, alignItems: 'center',
+  },
+  metricaValor: { fontSize: 28, fontWeight: '800', color: C.electrico },
+  metricaEtiqueta: { fontSize: 12, color: C.textoSuave, marginTop: 2, textAlign: 'center' },
+  tarjetaPlan: {
+    backgroundColor: C.blanco, borderRadius: R, padding: 20, gap: 8,
+    borderWidth: 1, borderColor: C.borde,
+  },
+  etiquetaPlan: {
+    fontSize: 12, fontWeight: '800', color: C.electrico,
+    textTransform: 'uppercase', letterSpacing: 0.8,
+  },
+  nombreEjercicio: { fontSize: 22, fontWeight: '800', color: C.marino, marginBottom: 2 },
+  separador: { height: 1, backgroundColor: C.borde, marginVertical: 6 },
+  negrita: { fontWeight: '800', color: C.marino },
+  letraChica: { fontSize: 13, color: C.textoSuave, lineHeight: 19, textAlign: 'center' },
+  avisoSosten: {
+    position: 'absolute', top: '42%', left: 24, right: 24,
+    backgroundColor: 'rgba(27,42,107,0.88)', borderRadius: R, paddingVertical: 16,
+  },
+  avisoSostenTexto: { color: C.blanco, fontSize: 26, fontWeight: '800', textAlign: 'center' },
+  encabezado: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    // En Android SafeAreaView no reserva la barra de estado, así que el
+    // encabezado quedaba pegado al borde y tapado por la hora y la señal.
+    marginTop: (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) : 0) + 8,
+    marginBottom: 4,
+  },
+  saludoChico: { fontSize: 17, color: C.textoSuave, marginTop: 8 },
+  parrafoSuave: { fontSize: 15, color: C.textoSuave },
+  tarjetaMeta: {
+    backgroundColor: C.hielo, borderRadius: R, padding: 18, gap: 8,
+    borderWidth: 1, borderColor: C.borde,
+  },
+  metaTitulo: { fontSize: 19, fontWeight: '800', color: C.marino },
+  metaTexto: { fontSize: 15, color: C.texto, lineHeight: 21 },
+  barra: { height: 8, borderRadius: 4, backgroundColor: C.borde, overflow: 'hidden', marginTop: 4 },
+  barraLlena: { height: '100%', borderRadius: 4, backgroundColor: C.electrico },
+  filaDato: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginVertical: 2 },
+  datoGrande: { fontSize: 26, fontWeight: '800', color: C.electrico },
+  datoTexto: { fontSize: 15, color: C.textoSuave, marginRight: 10 },
 });

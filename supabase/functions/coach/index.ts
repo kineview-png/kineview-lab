@@ -93,8 +93,8 @@ function construirTools(admin: SupabaseClient, patientId: string, recolector: {
       "de riesgo: una sesión aislada no permite triaje, la tendencia sí. Devuelve una lista vacía " +
       "si la persona no tiene sesiones previas.",
     inputSchema: z.object({
-      ultimas_n: z.number().int().min(1).max(20).default(8)
-        .describe("Cuántas sesiones previas traer. 8 cubre unas dos semanas de trabajo en casa."),
+      ultimas_n: z.number().int().min(1).max(12).default(6)
+        .describe("Cuántas sesiones previas traer. 6 cubre una semana y media de trabajo en casa, que es suficiente para ver una tendencia."),
     }),
     run: async ({ ultimas_n }) => {
       recolector.historialConsultado = true;
@@ -252,10 +252,17 @@ function describirSesion(s: EntradaSesion): string {
   ].filter(Boolean);
 
   if (s.metricas_por_rep.length > 0) {
-    lineas.push("", "Detalle por repetición (ROM en grados, tiempo en segundos):");
+    lineas.push(
+      "",
+      "Detalle por repetición. `sostén` son los segundos que mantuvo el brazo en el",
+      "rango alto: es el trabajo isométrico y el criterio que hace válida la",
+      "repetición (mínimo 3 s). Un `sostén` bajo con `tiempo` alto indica ejecución",
+      "balística, no terapia.",
+    );
     for (const r of s.metricas_por_rep) {
       lineas.push(
-        `  rep ${r.n}: ROM ${r.rom_deg}° · ${r.tiempo_s}s` +
+        `  rep ${r.n}: ROM ${r.rom_deg}° · tiempo ${r.tiempo_s}s` +
+          (r.sosten_s !== null ? ` · sostén ${r.sosten_s}s` : "") +
           (r.simetria_pct !== null ? ` · simetría ${r.simetria_pct}%` : ""),
       );
     }
@@ -373,6 +380,12 @@ Deno.serve(async (req: Request) => {
     // de lo que la persona hizo en su casa no se pierde.
     const sessionId = await persistirSesion(admin, patientId, sesion);
 
+    // Se arma UNA vez y se guarda: lo que se manda al modelo y lo que queda
+    // registrado son literalmente la misma cadena.
+    const textoEnviado = `Analiza esta sesión y emite el informe.
+
+${describirSesion(sesion)}`;
+
     const recolector = { informe: undefined as unknown, historialConsultado: false, guiaConsultada: 0 };
     const tools = construirTools(admin, patientId, recolector);
 
@@ -383,7 +396,13 @@ Deno.serve(async (req: Request) => {
       // resumen del razonamiento: es lo que el panel del kinesiólogo muestra
       // como "por qué se levantó esta alerta".
       thinking: { type: "adaptive", display: "summarized" },
-      output_config: { effort: "high" },
+      // `medium`, no `high`, y por una razón medida: con 11 sesiones de
+      // historial el triaje a `high` tardó 127 s, contra un techo de 150 s de
+      // reloj en las Edge Functions. El sistema se volvía más lento mientras
+      // más datos tenía — justo al revés de lo que necesita un producto que
+      // acumula sesiones. En Opus 5 el salto de calidad de medium a high es
+      // pequeño; el de fallar a no fallar, no.
+      output_config: { effort: "medium" },
       system: [
         { type: "text", text: SYSTEM_TRIAJE },
         { type: "text", text: BLOQUE_GUIA, cache_control: { type: "ephemeral" } },
@@ -451,6 +470,7 @@ Deno.serve(async (req: Request) => {
         triage_level: informe.triaje.nivel,
         risk_score: informe.triaje.puntaje,
         payload: informe,
+        agent_input: textoEnviado,
         reasoning_summary: resumenRazonamiento.join("\n\n") || null,
         model: modeloUsado,
         input_tokens: inputTokens,

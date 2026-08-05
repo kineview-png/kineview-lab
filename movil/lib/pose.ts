@@ -94,13 +94,27 @@ export function simetria(izq: number | null, der: number | null): number | null 
 export const UMBRAL_ARRIBA = 70;
 export const UMBRAL_ABAJO = 35;
 
-/** Una repetición no puede durar menos de esto. Filtra sacudidas. */
-const DURACION_MINIMA_MS = 600;
+/**
+ * ⚕️ Criterio clínico de Paulina: la repetición cuenta solo si la persona
+ * SOSTIENE el brazo arriba durante 3 segundos.
+ *
+ * No es lo mismo que "que la repetición dure 3 segundos". Lo que rehabilita es
+ * el trabajo isométrico en el rango alto, no el recorrido: alguien puede subir
+ * y bajar el brazo en un segundo y no haber hecho nada terapéutico. Por eso se
+ * mide el tiempo con el ángulo POR ENCIMA del umbral alto, y no la duración
+ * total del ciclo.
+ *
+ * Esto además explica el hallazgo de la primera sesión real: repeticiones de
+ * 0,6 s que el contador aceptaba y que clínicamente no eran repeticiones.
+ */
+export const SOSTEN_MINIMO_MS = 3000;
 
 export type MetricaRep = {
   n: number;
   rom_deg: number;
   tiempo_s: number;
+  /** Segundos que la persona sostuvo el brazo arriba. Es el trabajo real. */
+  sosten_s: number;
   simetria_pct: number | null;
 };
 
@@ -110,12 +124,25 @@ export type EstadoContador = {
   /** ROM máximo alcanzado en la repetición en curso. */
   romActual: number;
   inicioRepMs: number | null;
+  /** Milisegundos acumulados con el brazo por sobre el umbral alto. */
+  msSostenido: number;
+  /** Marca de tiempo de la muestra anterior, para acumular el sostén. */
+  ultimaMuestraMs: number | null;
   simetriasRep: number[];
   metricas: MetricaRep[];
 };
 
 export function estadoInicial(): EstadoContador {
-  return { fase: 'abajo', reps: 0, romActual: 0, inicioRepMs: null, simetriasRep: [], metricas: [] };
+  return {
+    fase: 'abajo',
+    reps: 0,
+    romActual: 0,
+    inicioRepMs: null,
+    msSostenido: 0,
+    ultimaMuestraMs: null,
+    simetriasRep: [],
+    metricas: [],
+  };
 }
 
 /**
@@ -136,25 +163,41 @@ export function avanzar(
   const romActual = Math.max(estado.romActual, anguloActivo);
   const simetriasRep = sim === null ? estado.simetriasRep : [...estado.simetriasRep, sim];
 
+  // El sostén se acumula muestra a muestra, no se estima al final: así el
+  // número que ve la persona en pantalla es el mismo que decide si la
+  // repetición vale.
+  const delta = estado.ultimaMuestraMs === null
+    ? 0
+    : Math.min(ahoraMs - estado.ultimaMuestraMs, 500); // un salto mayor es la app dormida
+  const msSostenido = anguloActivo >= UMBRAL_ARRIBA
+    ? estado.msSostenido + delta
+    : estado.msSostenido;
+
+  const base = { ...estado, romActual, simetriasRep, msSostenido, ultimaMuestraMs: ahoraMs };
+
   // Empieza a subir: arranca el cronómetro de la repetición.
   if (estado.fase === 'abajo' && anguloActivo >= UMBRAL_ARRIBA) {
-    return {
-      ...estado,
-      fase: 'arriba',
-      romActual,
-      simetriasRep,
-      inicioRepMs: estado.inicioRepMs ?? ahoraMs,
-    };
+    return { ...base, fase: 'arriba', inicioRepMs: estado.inicioRepMs ?? ahoraMs };
   }
 
-  // Vuelve abajo: se cierra la repetición.
+  // Vuelve abajo: se cierra el ciclo y se decide si contó.
   if (estado.fase === 'arriba' && anguloActivo <= UMBRAL_ABAJO) {
     const inicio = estado.inicioRepMs ?? ahoraMs;
     const duracionMs = ahoraMs - inicio;
 
-    // Demasiado rápida para ser un movimiento real: se descarta y se reinicia.
-    if (duracionMs < DURACION_MINIMA_MS) {
-      return { ...estado, fase: 'abajo', romActual: 0, inicioRepMs: null, simetriasRep: [] };
+    // No sostuvo los 3 segundos: el ciclo se descarta entero. Es deliberado
+    // que no cuente "a medias" — media repetición no existe clínicamente, y
+    // un contador indulgente le reporta al kinesiólogo un trabajo que no se
+    // hizo.
+    if (msSostenido < SOSTEN_MINIMO_MS) {
+      return {
+        ...base,
+        fase: 'abajo',
+        romActual: 0,
+        inicioRepMs: null,
+        msSostenido: 0,
+        simetriasRep: [],
+      };
     }
 
     const n = estado.reps + 1;
@@ -163,10 +206,12 @@ export function avanzar(
       : null;
 
     return {
+      ...base,
       fase: 'abajo',
       reps: n,
       romActual: 0,
       inicioRepMs: null,
+      msSostenido: 0,
       simetriasRep: [],
       // Tope de 60: es el máximo que acepta el backend, y mandar más sería
       // enviarle al modelo ruido que no puede usar.
@@ -176,12 +221,18 @@ export function avanzar(
             n,
             rom_deg: Math.round(romActual * 10) / 10,
             tiempo_s: Math.round((duracionMs / 1000) * 10) / 10,
+            sosten_s: Math.round((msSostenido / 1000) * 10) / 10,
             simetria_pct: promedioSim === null ? null : Math.round(promedioSim * 10) / 10,
           }],
     };
   }
 
-  return { ...estado, romActual, simetriasRep };
+  return base;
+}
+
+/** Cuánto le falta para que la repetición cuente, en segundos. */
+export function sostenRestanteS(estado: EstadoContador): number {
+  return Math.max(0, Math.ceil((SOSTEN_MINIMO_MS - estado.msSostenido) / 1000));
 }
 
 /** Resumen de la sesión, con la forma exacta que espera la Edge Function. */
