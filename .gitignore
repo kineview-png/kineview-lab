@@ -1,0 +1,24 @@
+# Secretos — jamás a git
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+SETUP_EVENTO.md
+
+# Dependencias y build
+node_modules/
+dist/
+build/
+.expo/
+android/
+ios/
+*.apk
+*.aab
+
+# Herramientas
+.supabase/
+.vercel/
+.DS_Store
+Thumbs.db
+*.log
