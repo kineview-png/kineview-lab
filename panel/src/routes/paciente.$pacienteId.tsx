@@ -308,15 +308,47 @@ function DetallePaciente() {
         {/* El resumen del razonamiento viene de `thinking: adaptive, display:
             summarized`. Es literalmente por qué el agente levantó la alerta —
             no una explicación reconstruida después. */}
-        {informe?.reasoning_summary && (
+        {/*
+         * El "por qué" NUNCA puede quedar vacío.
+         *
+         * Antes esta sección dependía solo de `reasoning_summary`, que son los
+         * bloques de pensamiento del modelo — y esos no siempre vienen: en una
+         * corrida real el caso más grave del panel, un rojo de 88, llegó con el
+         * resumen en blanco y la pantalla escondía la sección entera. Un
+         * kinesiólogo abriendo su alerta más urgente y encontrando que no dice
+         * por qué es exactamente lo contrario de lo que este producto promete.
+         *
+         * Los `motivos` del triaje son parte del informe, no del pensamiento, y
+         * siempre están. Se usan de respaldo y se rotula distinto: no es lo
+         * mismo el razonamiento del modelo que su conclusión, y presentarlos
+         * como equivalentes sería mentir sobre la fuente.
+         */}
+        {(informe?.reasoning_summary || informe?.payload?.triaje?.motivos?.length) && (
           <section className="card-clinic p-5">
             <div className="mb-2 flex items-center gap-2">
               <Brain className="size-4 text-electric" />
               <h2 className="text-base font-bold">Por qué se levantó esta alerta</h2>
             </div>
-            <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
-              {informe.reasoning_summary}
-            </p>
+
+            {informe?.reasoning_summary ? (
+              <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+                {informe.reasoning_summary}
+              </p>
+            ) : (
+              <>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Motivos declarados por el agente
+                </p>
+                <ul className="space-y-2">
+                  {informe!.payload!.triaje!.motivos.map((m) => (
+                    <li key={m} className="flex gap-2.5 text-sm leading-relaxed text-muted-foreground">
+                      <span aria-hidden className="mt-2 size-1.5 shrink-0 rounded-full bg-electric" />
+                      <span>{m}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </section>
         )}
 
