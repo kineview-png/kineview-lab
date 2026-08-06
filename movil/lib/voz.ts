@@ -13,9 +13,12 @@
 // funcionando sin voz en binarios viejos en vez de reventar al abrir.
 // ═══════════════════════════════════════════════════════════════════════════
 
+type VozDisponible = { identifier: string; name: string; language: string; quality?: string };
+
 type ModuloVoz = {
   speak: (texto: string, opciones?: Record<string, unknown>) => void;
   stop: () => void;
+  getAvailableVoicesAsync?: () => Promise<VozDisponible[]>;
 };
 
 let voz: ModuloVoz | null = null;
@@ -27,6 +30,68 @@ try {
 }
 
 export const hayVoz = voz !== null;
+
+/*
+ * QUÉ VOZ USAR.
+ *
+ * La primera versión pedía `language: 'es-CL'` a secas. En el teléfono de
+ * Paulina no se escuchó absolutamente nada, y ese es el modo en que esto
+ * falla: si el aparato no tiene instalada una voz para el idioma exacto que
+ * se le pide, Android NO tira error — simplemente no dice nada. Español de
+ * Chile casi nunca viene instalado de fábrica; es-ES y es-US sí.
+ *
+ * Así que en vez de exigir un idioma, se le pregunta al teléfono qué voces
+ * tiene y se elige la mejor en español que realmente exista. Si no hay
+ * ninguna, se habla sin especificar idioma: la voz del sistema leyendo
+ * español con acento raro es infinitamente mejor que el silencio.
+ */
+const PREFERIDOS = ['es-cl', 'es-419', 'es-us', 'es-mx', 'es-ar', 'es-es', 'es'];
+
+let vozElegida: { identifier?: string; language?: string } | null = null;
+let diagnostico = 'sin inicializar';
+
+function puntajeVoz(v: VozDisponible): number {
+  const lang = (v.language || '').toLowerCase();
+  const i = PREFERIDOS.findIndex((p) => lang === p || lang.startsWith(p + '-'));
+  if (i === -1) return lang.startsWith('es') ? PREFERIDOS.length : -1;
+  return i;
+}
+
+/**
+ * Se llama una vez al arrancar. Es `void`-seguro: si falla, la app sigue y
+ * habla con la voz por defecto.
+ */
+export async function prepararVoz(): Promise<string> {
+  if (!voz) {
+    diagnostico = 'expo-speech no está en este binario';
+    return diagnostico;
+  }
+  try {
+    const todas = (await voz.getAvailableVoicesAsync?.()) ?? [];
+    const enEspanol = todas.filter((v) => puntajeVoz(v) >= 0);
+
+    if (enEspanol.length === 0) {
+      // Sin voz en español: se habla igual, sin pedir idioma.
+      vozElegida = {};
+      diagnostico = `sin voz en español (${todas.length} voces en el equipo)`;
+      return diagnostico;
+    }
+
+    enEspanol.sort((a, b) => puntajeVoz(a) - puntajeVoz(b));
+    const mejor = enEspanol[0];
+    vozElegida = { identifier: mejor.identifier, language: mejor.language };
+    diagnostico = `${mejor.language} · ${mejor.name}`;
+    return diagnostico;
+  } catch (e) {
+    vozElegida = {};
+    diagnostico = `no se pudieron listar las voces (${String(e)})`;
+    return diagnostico;
+  }
+}
+
+export function estadoVoz(): string {
+  return diagnostico;
+}
 
 let ultimaFrase = '';
 let ultimaMs = 0;
@@ -52,7 +117,9 @@ export function hablar(
 
   if (interrumpe) voz.stop();
   voz.speak(texto, {
-    language: 'es-CL',
+    // Si `prepararVoz` todavía no corrió, `vozElegida` es null y no se manda
+    // idioma: hablar con la voz del sistema es mejor que no hablar.
+    ...(vozElegida ?? {}),
     /*
      * Bastante más lento que el habla normal.
      *

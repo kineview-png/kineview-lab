@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -26,6 +27,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { Camera } from 'react-native-vision-camera';
 import {
   Delegate, MediapipeCamera, RunningMode, usePoseDetection,
@@ -34,12 +36,13 @@ import {
 import type { Session } from '@supabase/supabase-js';
 
 import { Boton } from './components/Boton';
-import { Esqueleto } from './components/Esqueleto';
 import { Logo } from './components/Logo';
 import { CarasDolor, SelectorLado, TamizajeSignos, type ClaveSigno } from './components/Clinico';
 import { DemoEjercicio } from './components/DemoEjercicio';
 import { TarjetaProgreso } from './components/Progreso';
-import { callar, decirInstruccionInicial, decirRepeticion, hablar } from './lib/voz';
+import {
+  callar, decirInstruccionInicial, decirRepeticion, estadoVoz, hablar, prepararVoz,
+} from './lib/voz';
 import { C, R } from './lib/theme';
 import { supabase } from './lib/supabase';
 import { dispararTriaje, pedirFeedback, type Feedback } from './lib/coach';
@@ -163,26 +166,20 @@ function PantallaSesion() {
   const [hud, setHud] = useState<{
     rom: number | null;
     sostenFalta: number | null;
-    puntos: { x: number; y: number }[];
-  }>({ rom: null, sostenFalta: null, puntos: [] });
+  }>({ rom: null, sostenFalta: null });
 
   /*
-   * El esqueleto arranca APAGADO.
+   * Permiso de cámara, con estado propio.
    *
-   * Paulina lo probó y el diagnóstico fue certero: "el esqueleto hace que se
-   * vea lento y reconozca mal los ejercicios". Lo segundo no era impresión
-   * suya. Dibujarlo obliga a proyectar 33 puntos a coordenadas de pantalla y a
-   * reconstruir el trazo en cada repintado, encima del pipeline de la cámara;
-   * cuando el hilo se satura se pierden cuadros, y un cuadro perdido en el peak
-   * del movimiento es un ROM que se mide más bajo de lo que fue o una
-   * repetición que no se cuenta. El adorno estaba degradando la medición.
-   *
-   * Se deja como interruptor, apagado, porque mostrarlo sigue sirviendo para
-   * explicar de un vistazo qué está midiendo la app. Apagado no cuesta nada:
-   * ni se proyectan los puntos ni se monta el lienzo.
+   * Antes esto era `Camera.requestCameraPermission()` suelto en un efecto, sin
+   * mirar el resultado. Si el permiso no estaba —y al desinstalar la app
+   * Android lo borra, que es exactamente lo que pasó hoy— el preview quedaba
+   * NEGRO, sin un mensaje, sin un botón, sin forma de saber qué había fallado.
+   * La persona concluye que la app está rota.
    */
-  const [verEsqueleto, setVerEsqueleto] = useState(false);
-  const verEsqueletoRef = useRef(false);
+  const [permiso, setPermiso] = useState<'cargando' | 'ok' | 'falta'>('cargando');
+  const [vozInfo, setVozInfo] = useState('');
+
 
   const onResults = useCallback((res: PoseDetectionResultBundle, vc: any) => {
     const lm = res.results?.[0]?.landmarks?.[0] as Landmark[] | undefined;
@@ -216,23 +213,9 @@ function PantallaSesion() {
     // los cuadros; lo que se limita es el dibujo, que es lo caro.
     if (ahora - ultimoPintado.current > 100) {
       ultimoPintado.current = ahora;
-      let puntos: { x: number; y: number }[] = [];
-      // Proyectar los 33 puntos solo si se van a dibujar. Con el esqueleto
-      // apagado esto no se ejecuta y el hilo queda libre para medir.
-      if (verEsqueletoRef.current) {
-        try {
-          // convertPoint ya aplica rotación y espejo de la cámara frontal.
-          // NO aplicar x = 1 - x a mano: se rota el esqueleto 90°.
-          const dims = vc.getFrameDims(res);
-          puntos = lm.map((p) => vc.convertPoint(dims, { x: p.x, y: p.y }));
-        } catch {
-          puntos = [];
-        }
-      }
       setHud({
         rom: activo === null ? null : Math.round(activo),
         sostenFalta: nuevo.fase === 'arriba' ? sostenRestanteS(nuevo) : null,
-        puntos,
       });
     }
   }, []);
@@ -248,17 +231,53 @@ function PantallaSesion() {
     { delegate: Delegate.GPU, numPoses: 1 },
   );
 
-  // vision-camera v4 exige pedir el permiso explícitamente al montar.
-  useEffect(() => {
-    Camera.requestCameraPermission();
+  // vision-camera v4 exige pedir el permiso explícitamente. Acá se pide Y se
+  // guarda la respuesta, que es la mitad que faltaba.
+  const pedirCamara = useCallback(async () => {
+    const estado = await Camera.requestCameraPermission();
+    setPermiso(estado === 'granted' ? 'ok' : 'falta');
+    return estado === 'granted';
   }, []);
+
+  useEffect(() => {
+    const ya = Camera.getCameraPermissionStatus();
+    if (ya === 'granted') setPermiso('ok');
+    else void pedirCamara();
+  }, [pedirCamara]);
+
+  // Qué voz tiene realmente este teléfono. Se resuelve una vez, al arrancar.
+  useEffect(() => {
+    void prepararVoz().then(setVozInfo);
+  }, []);
+
+  /*
+   * La pantalla no se apaga mientras se está midiendo.
+   *
+   * Durante el ejercicio la persona NO toca el teléfono: lo apoya y levanta el
+   * brazo. Android cuenta eso como inactividad y a los 30 segundos apaga la
+   * pantalla — y con la pantalla apagada la cámara se detiene, así que se
+   * pierde la sesión a media serie. Es un bug de los que solo aparecen cuando
+   * alguien de verdad hace el ejercicio completo, nunca probando en el
+   * escritorio con el dedo encima.
+   *
+   * Se activa SOLO mientras se mide y se libera al salir, incluso si la
+   * pantalla se desmonta por un error: dejar el candado puesto le vaciaría la
+   * batería a alguien que solo quería hacer diez repeticiones.
+   */
+  useEffect(() => {
+    if (etapa !== 'midiendo') return;
+    void activateKeepAwakeAsync('kineview-sesion');
+    return () => {
+      void deactivateKeepAwake('kineview-sesion');
+    };
+  }, [etapa]);
 
   const comenzar = () => {
     if (lado) decirInstruccionInicial(lado);
     contador.current = estadoInicial();
     inicioMs.current = Date.now();
     setReps(0);
-    setHud({ rom: null, sostenFalta: null, puntos: [] });
+    setHud({ rom: null, sostenFalta: null });
     setTamizajeListo(false);
     setEtapa('midiendo');
   };
@@ -331,6 +350,38 @@ function PantallaSesion() {
     );
   }
 
+  if (etapa === 'midiendo' && permiso !== 'ok') {
+    return (
+      <View style={s.pantallaCentrada}>
+        <Text style={s.emojiGrande}>📷</Text>
+        <Text style={s.titulo}>Falta el permiso de la cámara</Text>
+        <Text style={s.parrafo}>
+          KineView necesita ver tus movimientos para contar tus repeticiones. El video
+          no sale de tu teléfono.
+        </Text>
+        <Boton
+          titulo="Permitir la cámara"
+          onPress={() => {
+            void pedirCamara().then((ok) => {
+              // Si Android ya no muestra el diálogo (se rechazó "para siempre"),
+              // el único camino es Ajustes. Se lleva a la persona, no se la deja
+              // apretando un botón que no hace nada.
+              if (!ok) void Linking.openSettings();
+            });
+          }}
+        />
+        <Boton
+          titulo="Volver"
+          variante="secundario"
+          onPress={() => {
+            callar();
+            setEtapa('inicio');
+          }}
+        />
+      </View>
+    );
+  }
+
   if (etapa === 'midiendo') {
     return (
       <View style={s.camaraRaiz}>
@@ -339,7 +390,6 @@ function PantallaSesion() {
           solution={pose}
           activeCamera="front"
         />
-        {verEsqueleto && <Esqueleto puntos={hud.puntos} />}
         <View style={s.hud} pointerEvents="none">
           <Text style={s.hudReps}>{reps}</Text>
           <Text style={s.hudEtiqueta}>repeticiones</Text>
@@ -352,24 +402,6 @@ function PantallaSesion() {
             </Text>
           </View>
         )}
-        <View style={s.interruptorEsqueleto}>
-          <Pressable
-            onPress={() => {
-              const v = !verEsqueleto;
-              verEsqueletoRef.current = v;
-              setVerEsqueleto(v);
-              if (!v) setHud((h) => ({ ...h, puntos: [] }));
-            }}
-            android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }}
-            style={s.interruptorZona}
-            accessibilityRole="switch"
-            accessibilityState={{ checked: verEsqueleto }}
-            accessibilityLabel="Mostrar el esqueleto que dibuja la app"
-          >
-            <Text style={s.interruptorTexto}>{verEsqueleto ? 'Ocultar' : 'Ver'} esqueleto</Text>
-          </Pressable>
-        </View>
-
         <View style={s.barraInferior}>
           <Boton
             titulo="Terminar sesión"
@@ -538,6 +570,28 @@ function PantallaInicio({ onComenzar }: { onComenzar: (lado: LadoAfectado) => vo
 
       {!!estado?.progreso?.length && <TarjetaProgreso puntos={estado.progreso} />}
 
+      {/*
+       * Probar la voz desde el inicio.
+       *
+       * Existe porque la voz falla EN SILENCIO: si el teléfono no tiene la voz
+       * del idioma pedido, Android no avisa, simplemente no habla, y desde
+       * afuera es indistinguible de "la app está muda porque sí". Con esto se
+       * sabe en dos segundos si suena, y qué voz eligió.
+       */}
+      <View style={s.probarVoz}>
+        <Pressable
+          onPress={() => hablar('Hola. Soy la voz que te va a guiar en tus ejercicios.', {
+            interrumpe: true, minMs: 0,
+          })}
+          android_ripple={{ color: 'rgba(30,144,255,0.15)' }}
+          style={s.probarVozZona}
+          accessibilityRole="button"
+        >
+          <Text style={s.probarVozTexto}>🔊 Probar la voz</Text>
+          <Text style={s.probarVozInfo}>{estadoVoz()}</Text>
+        </Pressable>
+      </View>
+
       {estado?.ultimaSesion && !hechoHoy && (
         <Text style={s.parrafoSuave}>
           Tu última sesión fue {cuandoFue(estado.ultimaSesion).toLowerCase()}.
@@ -662,12 +716,19 @@ const s = StyleSheet.create({
     position: 'absolute', width: 8, height: 8, borderRadius: 4,
     backgroundColor: C.electrico, borderWidth: 1, borderColor: C.blanco,
   },
-  interruptorEsqueleto: { position: 'absolute', top: 34, right: 20 },
-  interruptorZona: {
-    paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999,
-    backgroundColor: 'rgba(0,0,0,0.42)',
+  probarVoz: {
+    alignSelf: 'stretch', borderRadius: R, borderWidth: 1,
+    borderColor: C.borde, backgroundColor: C.blanco, overflow: 'hidden',
   },
-  interruptorTexto: { color: C.blanco, fontSize: 13.5, fontWeight: '700' },
+  probarVozZona: { paddingVertical: 14, paddingHorizontal: 16, gap: 3 },
+  probarVozTexto: { fontSize: 15.5, fontWeight: '700', color: C.marino },
+  probarVozInfo: { fontSize: 12, color: C.textoSuave },
+
+  pantallaCentrada: {
+    flex: 1, backgroundColor: C.fondo, justifyContent: 'center',
+    paddingHorizontal: 24, paddingVertical: 40, gap: 16,
+  },
+  emojiGrande: { fontSize: 56, textAlign: 'center' },
   hud: { position: 'absolute', top: 28, left: 24, alignItems: 'flex-start' },
   hudReps: { fontSize: 72, fontWeight: '800', color: C.blanco },
   hudEtiqueta: { fontSize: 15, color: C.blanco, marginTop: -8, opacity: 0.9 },
