@@ -303,12 +303,24 @@ function PantallaSesion() {
       setFeedback(fb);
       setEtapa('feedback');
     } catch (e: any) {
-      const esDeRed = /failed to send|network|fetch|timeout/i.test(e?.message ?? '');
+      const msg: string = e?.message ?? '';
+      const esDeRed = /failed to send|network|fetch|timeout/i.test(msg);
+
+      /*
+       * Un fallo de la cuenta —crédito agotado, clave revocada— NO es culpa de
+       * la persona y no se arregla reintentando. Decirle "intenta de nuevo"
+       * sería mandarla a repetir el ejercicio para nada. Se le dice la verdad
+       * en su idioma: sus datos están guardados y el problema es nuestro.
+       */
+      const esDeCuenta = /credit balance|billing|quota|rate.?limit|authentication|api key/i.test(msg);
+
       Alert.alert(
-        esDeRed ? 'Sin conexión' : 'No pudimos analizar la sesión',
+        esDeRed ? 'Sin conexión' : esDeCuenta ? 'El análisis no está disponible' : 'No pudimos analizar la sesión',
         esDeRed
           ? 'Tu sesión quedó guardada. Revisa tu conexión y toca "Ver mi resultado" de nuevo.'
-          : (e?.message ?? 'Intenta de nuevo.'),
+          : esDeCuenta
+            ? 'Tus repeticiones quedaron registradas y tu kinesiólogo las va a ver. El análisis automático está temporalmente fuera de servicio; no es nada que hayas hecho mal.'
+            : (msg || 'Intenta de nuevo.'),
       );
       setEtapa('dolor_post');
     }

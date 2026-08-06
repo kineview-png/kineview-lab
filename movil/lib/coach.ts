@@ -71,6 +71,25 @@ async function invocar(
       });
       if (!error) return data;
 
+      /*
+       * El cuerpo de la respuesta trae el motivo REAL; `error.message` solo
+       * dice "Edge Function returned a non-2xx status code", que no le sirve a
+       * nadie. Pasó exactamente eso: la cuenta de Anthropic se quedó sin
+       * crédito y desde el teléfono era indistinguible de un bug de la app.
+       * Diagnosticarlo costó reproducir la llamada entera contra el servidor.
+       *
+       * `context` es la Response cruda de supabase-js; leerla puede fallar
+       * (ya consumida, o no es JSON), y si falla se sigue con el mensaje
+       * genérico en vez de romper el manejo del error.
+       */
+      try {
+        const cuerpo = await (error as any)?.context?.json?.();
+        const motivo = cuerpo?.error ?? cuerpo?.detalles?.join('; ');
+        if (motivo) (error as any).message = String(motivo);
+      } catch {
+        /* se queda el mensaje genérico */
+      }
+
       // `FunctionsFetchError` es el fetch que ni siquiera salió: eso sí se
       // reintenta. Un `FunctionsHttpError` ya llegó al servidor y volvió con
       // un veredicto.
