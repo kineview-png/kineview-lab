@@ -6,26 +6,44 @@ import { C, R } from '../lib/theme';
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Escala de dolor con caras, en vez de una fila de números del 0 al 10.
+ * Escala EVA de 0 a 10, con cara.
  *
- * Pedido de Paulina, y con razón: pedirle a una persona mayor —muchas veces
- * sola, a veces con afasia después de un ACV— que traduzca su dolor a un número
- * abstracto es pedirle un trabajo cognitivo que no tiene por qué hacer. Las
- * caras son el estándar clínico para eso (tipo Wong-Baker) y se responden de un
- * vistazo.
+ * Corrección de Paulina: la escala tiene que ser la médica completa, 0 a 10,
+ * "pero claro, con cara, donde 0 es sin dolor". Las dos cosas a la vez, y son
+ * dos cosas distintas:
  *
- * Por dentro sigue siendo EVA 0-10: lo que cambia es cómo se pregunta, no lo
- * que se registra, así que el historial y los umbrales del agente siguen
- * comparables.
+ *  · Los ONCE puntos son innegociables. La versión anterior ofrecía solo pares
+ *    (0-2-4-6-8-10) y eso no es EVA: es media escala. Además rompía justo el
+ *    umbral que usa el agente para derivar —"dolor que sube 3 o más puntos"—
+ *    porque con saltos de 2 un aumento real de 3 se registraba como 2 o como 4.
+ *    La granularidad no era cosmética, era clínica.
+ *
+ *  · La cara es lo que la hace respondible. Pedirle a una persona mayor, a
+ *    veces con afasia después de un ACV, que traduzca su dolor a un número
+ *    abstracto es un trabajo cognitivo que no tiene por qué hacer. Acá el
+ *    número lo elige ella, pero la cara y la palabra le dicen qué significa
+ *    cada número mientras lo elige.
+ *
+ * Las bandas (leve 1-3, moderado 4-6, intenso 7-9) son las de uso clínico
+ * habitual; el 10 se reserva para el ancla "el peor dolor imaginable".
  */
-const CARAS = [
-  { valor: 0, cara: '😀', texto: 'Sin dolor' },
-  { valor: 2, cara: '🙂', texto: 'Un poquito' },
-  { valor: 4, cara: '😐', texto: 'Algo' },
-  { valor: 6, cara: '🙁', texto: 'Bastante' },
-  { valor: 8, cara: '😣', texto: 'Mucho' },
-  { valor: 10, cara: '😫', texto: 'El peor' },
+const CARAS = ['😀', '🙂', '🙂', '😐', '😐', '😕', '🙁', '😖', '😣', '😫', '😭'] as const;
+
+const VALORES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+/** Verde → ámbar → rojo. El color acompaña, no reemplaza al número. */
+const COLOR_DOLOR = [
+  '#16A34A', '#3F9F2E', '#69A317', '#93A50B', '#BCA200',
+  '#D99400', '#E77E00', '#EE6400', '#F04A0E', '#EE2F22', '#DC2626',
 ] as const;
+
+function rotulo(v: number): string {
+  if (v === 0) return 'Sin dolor';
+  if (v <= 3) return 'Dolor leve';
+  if (v <= 6) return 'Dolor moderado';
+  if (v <= 9) return 'Dolor intenso';
+  return 'El peor dolor que puedas imaginar';
+}
 
 export function CarasDolor({
   valor,
@@ -34,26 +52,59 @@ export function CarasDolor({
   valor: number | null;
   onChange: (n: number) => void;
 }) {
+  const elegido = valor !== null;
+  const color = elegido ? COLOR_DOLOR[valor] : C.borde;
+
   return (
-    <View style={s.caras}>
-      {CARAS.map((c) => {
-        const activa = valor === c.valor;
-        return (
-          <View key={c.valor} style={[s.cara, activa && s.caraActiva]}>
-            <Pressable
-              onPress={() => onChange(c.valor)}
-              android_ripple={{ color: 'rgba(30,144,255,0.15)' }}
-              style={s.caraZona}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: activa }}
-              accessibilityLabel={`${c.texto}, ${c.valor} de 10`}
+    <View style={s.eva}>
+      {/* La cara grande: es el resumen de lo que la persona acaba de elegir. */}
+      <View style={[s.evaCara, elegido && { borderColor: color }]}>
+        <Text style={s.evaEmoji}>{elegido ? CARAS[valor] : '🤔'}</Text>
+        <View style={s.evaLectura}>
+          <Text style={[s.evaNumero, elegido && { color }]}>{elegido ? valor : '—'}</Text>
+          <Text style={s.evaDe}>de 10</Text>
+        </View>
+      </View>
+
+      <Text style={[s.evaRotulo, elegido && { color }]}>
+        {elegido ? rotulo(valor) : 'Toca el número que representa tu dolor'}
+      </Text>
+
+      {/*
+       * Los once números. Envuelven en dos filas en pantallas angostas en vez
+       * de encogerse: once objetivos de 30 px son intocables para una mano con
+       * secuela motora, que es exactamente la mano de nuestro usuario.
+       */}
+      <View style={s.evaFila}>
+        {VALORES.map((v) => {
+          const activo = valor === v;
+          return (
+            <View
+              key={v}
+              style={[
+                s.evaBoton,
+                activo && { backgroundColor: COLOR_DOLOR[v], borderColor: COLOR_DOLOR[v] },
+              ]}
             >
-              <Text style={s.caraEmoji}>{c.cara}</Text>
-              <Text style={[s.caraTexto, activa && s.caraTextoActivo]}>{c.texto}</Text>
-            </Pressable>
-          </View>
-        );
-      })}
+              <Pressable
+                onPress={() => onChange(v)}
+                android_ripple={{ color: 'rgba(30,144,255,0.15)', borderless: false }}
+                style={s.evaBotonZona}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: activo }}
+                accessibilityLabel={`${v} de 10, ${rotulo(v).toLowerCase()}`}
+              >
+                <Text style={[s.evaBotonTexto, activo && s.evaBotonTextoActivo]}>{v}</Text>
+              </Pressable>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={s.evaExtremos}>
+        <Text style={s.evaExtremo}>0 · sin dolor</Text>
+        <Text style={s.evaExtremo}>10 · el peor</Text>
+      </View>
     </View>
   );
 }
@@ -160,16 +211,29 @@ export function TamizajeSignos({
 // ─────────────────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
-  caras: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  cara: {
-    width: '31%', borderRadius: R, borderWidth: 2, borderColor: C.borde,
-    backgroundColor: C.hielo, overflow: 'hidden',
+  eva: { gap: 12 },
+  evaCara: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18,
+    borderRadius: R, borderWidth: 2.5, borderColor: C.borde,
+    backgroundColor: C.hielo, paddingVertical: 14,
   },
-  caraActiva: { borderColor: C.electrico, backgroundColor: C.blanco },
-  caraZona: { alignItems: 'center', paddingVertical: 12, gap: 2 },
-  caraEmoji: { fontSize: 34 },
-  caraTexto: { fontSize: 12.5, color: C.textoSuave, fontWeight: '600', textAlign: 'center' },
-  caraTextoActivo: { color: C.marino, fontWeight: '800' },
+  evaEmoji: { fontSize: 56 },
+  evaLectura: { alignItems: 'center' },
+  evaNumero: { fontSize: 46, fontWeight: '800', color: C.textoSuave, lineHeight: 50 },
+  evaDe: { fontSize: 13, fontWeight: '600', color: C.textoSuave, marginTop: -2 },
+  evaRotulo: { fontSize: 17, fontWeight: '800', color: C.textoSuave, textAlign: 'center' },
+
+  evaFila: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  evaBoton: {
+    width: 52, borderRadius: 14, borderWidth: 2, borderColor: C.borde,
+    backgroundColor: C.blanco, overflow: 'hidden',
+  },
+  evaBotonZona: { height: 52, alignItems: 'center', justifyContent: 'center' },
+  evaBotonTexto: { fontSize: 20, fontWeight: '800', color: C.marino },
+  evaBotonTextoActivo: { color: C.blanco },
+
+  evaExtremos: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
+  evaExtremo: { fontSize: 12.5, fontWeight: '600', color: C.textoSuave },
 
   lados: { flexDirection: 'row', gap: 10 },
   lado: {

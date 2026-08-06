@@ -12,8 +12,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, SafeAreaView,
-  RefreshControl, ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { Camera } from 'react-native-vision-camera';
 import {
@@ -146,6 +157,24 @@ function PantallaSesion() {
     puntos: { x: number; y: number }[];
   }>({ rom: null, sostenFalta: null, puntos: [] });
 
+  /*
+   * El esqueleto arranca APAGADO.
+   *
+   * Paulina lo probó y el diagnóstico fue certero: "el esqueleto hace que se
+   * vea lento y reconozca mal los ejercicios". Lo segundo no era impresión
+   * suya. Dibujarlo obliga a proyectar 33 puntos a coordenadas de pantalla y a
+   * reconstruir el trazo en cada repintado, encima del pipeline de la cámara;
+   * cuando el hilo se satura se pierden cuadros, y un cuadro perdido en el peak
+   * del movimiento es un ROM que se mide más bajo de lo que fue o una
+   * repetición que no se cuenta. El adorno estaba degradando la medición.
+   *
+   * Se deja como interruptor, apagado, porque mostrarlo sigue sirviendo para
+   * explicar de un vistazo qué está midiendo la app. Apagado no cuesta nada:
+   * ni se proyectan los puntos ni se monta el lienzo.
+   */
+  const [verEsqueleto, setVerEsqueleto] = useState(false);
+  const verEsqueletoRef = useRef(false);
+
   const onResults = useCallback((res: PoseDetectionResultBundle, vc: any) => {
     const lm = res.results?.[0]?.landmarks?.[0] as Landmark[] | undefined;
     if (!lm || lm.length < 25) return;
@@ -179,13 +208,17 @@ function PantallaSesion() {
     if (ahora - ultimoPintado.current > 100) {
       ultimoPintado.current = ahora;
       let puntos: { x: number; y: number }[] = [];
-      try {
-        // convertPoint ya aplica rotación y espejo de la cámara frontal.
-        // NO aplicar x = 1 - x a mano: se rota el esqueleto 90°.
-        const dims = vc.getFrameDims(res);
-        puntos = lm.map((p) => vc.convertPoint(dims, { x: p.x, y: p.y }));
-      } catch {
-        puntos = [];
+      // Proyectar los 33 puntos solo si se van a dibujar. Con el esqueleto
+      // apagado esto no se ejecuta y el hilo queda libre para medir.
+      if (verEsqueletoRef.current) {
+        try {
+          // convertPoint ya aplica rotación y espejo de la cámara frontal.
+          // NO aplicar x = 1 - x a mano: se rota el esqueleto 90°.
+          const dims = vc.getFrameDims(res);
+          puntos = lm.map((p) => vc.convertPoint(dims, { x: p.x, y: p.y }));
+        } catch {
+          puntos = [];
+        }
       }
       setHud({
         rom: activo === null ? null : Math.round(activo),
@@ -296,9 +329,7 @@ function PantallaSesion() {
           solution={pose}
           activeCamera="front"
         />
-        {/* El esqueleto: 33 puntos y 30 huesos dibujados sobre la cámara. Lo
-            que la persona ve es literalmente lo que la app está midiendo. */}
-        <Esqueleto puntos={hud.puntos} />
+        {verEsqueleto && <Esqueleto puntos={hud.puntos} />}
         <View style={s.hud} pointerEvents="none">
           <Text style={s.hudReps}>{reps}</Text>
           <Text style={s.hudEtiqueta}>repeticiones</Text>
@@ -311,6 +342,24 @@ function PantallaSesion() {
             </Text>
           </View>
         )}
+        <View style={s.interruptorEsqueleto}>
+          <Pressable
+            onPress={() => {
+              const v = !verEsqueleto;
+              verEsqueletoRef.current = v;
+              setVerEsqueleto(v);
+              if (!v) setHud((h) => ({ ...h, puntos: [] }));
+            }}
+            android_ripple={{ color: 'rgba(255,255,255,0.2)', borderless: true }}
+            style={s.interruptorZona}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: verEsqueleto }}
+            accessibilityLabel="Mostrar el esqueleto que dibuja la app"
+          >
+            <Text style={s.interruptorTexto}>{verEsqueleto ? 'Ocultar' : 'Ver'} esqueleto</Text>
+          </Pressable>
+        </View>
+
         <View style={s.barraInferior}>
           <Boton
             titulo="Terminar sesión"
@@ -601,6 +650,12 @@ const s = StyleSheet.create({
     position: 'absolute', width: 8, height: 8, borderRadius: 4,
     backgroundColor: C.electrico, borderWidth: 1, borderColor: C.blanco,
   },
+  interruptorEsqueleto: { position: 'absolute', top: 34, right: 20 },
+  interruptorZona: {
+    paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+  interruptorTexto: { color: C.blanco, fontSize: 13.5, fontWeight: '700' },
   hud: { position: 'absolute', top: 28, left: 24, alignItems: 'flex-start' },
   hudReps: { fontSize: 72, fontWeight: '800', color: C.blanco },
   hudEtiqueta: { fontSize: 15, color: C.blanco, marginTop: -8, opacity: 0.9 },
