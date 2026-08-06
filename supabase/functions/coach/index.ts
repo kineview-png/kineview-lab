@@ -421,13 +421,33 @@ ${describirSesion(sesion)}`;
       // resumen del razonamiento: es lo que el panel del kinesiólogo muestra
       // como "por qué se levantó esta alerta".
       thinking: { type: "adaptive", display: "summarized" },
-      // `medium`, no `high`, y por una razón medida: con 11 sesiones de
-      // historial el triaje a `high` tardó 127 s, contra un techo de 150 s de
-      // reloj en las Edge Functions. El sistema se volvía más lento mientras
-      // más datos tenía — justo al revés de lo que necesita un producto que
-      // acumula sesiones. En Opus 5 el salto de calidad de medium a high es
-      // pequeño; el de fallar a no fallar, no.
-      output_config: { effort: "medium" },
+      /*
+       * `medium`. Estuvo en `low` un rato y se volvió atrás, y vale la pena
+       * dejar por qué escrito, porque la primera conclusión estaba mal:
+       *
+       *   effort   corta el bucle   latencia   salida   resumen
+       *   high     no                127 s        —        —
+       *   medium   no                 94 s      7223     956 car.
+       *   low      no                 77 s      5814     499 car.
+       *   medium   sí                105 s      7356     988 car.
+       *   low      sí                 37 s      2351     156 car.
+       *
+       * Las dos corridas de `medium` dieron 94 s y 105 s con el mismo caso.
+       * Esa dispersión es el argumento: no es que medium sea lento, es que no
+       * es PREDECIBLE, y el techo de 150 s no perdona. Pasarse no degrada el
+       * informe, lo elimina — la Edge Function se mata y el kinesiólogo ve la
+       * bandeja vacía sin enterarse de que hubo una sesión.
+       *
+       * `low` con el bucle cortado usa el 25% del reloj. Eso deja margen para
+       * que el historial crezca durante meses sin que nadie tenga que volver
+       * a tocar esto.
+       *
+       * El costo es que el resumen del razonamiento sale corto. Se asume: lo
+       * que sostiene el "por qué" en el panel son `triaje.motivos`, la
+       * `evidencia` citada y el `no_se`, y todo eso sale del informe, no de
+       * los bloques de pensamiento.
+       */
+      output_config: { effort: "low" },
       system: [
         { type: "text", text: SYSTEM_TRIAJE },
         { type: "text", text: BLOQUE_GUIA, cache_control: { type: "ephemeral" } },
@@ -462,6 +482,21 @@ ${describirSesion(sesion)}`;
           resumenRazonamiento.push(bloque.thinking.trim());
         }
       }
+
+      /*
+       * En cuanto el informe está en la mano, se corta el bucle.
+       *
+       * Sin esto, el runner devuelve el resultado de `emitir_informe` al
+       * modelo y paga una llamada COMPLETA a Opus 5 para que escriba una
+       * frase de cierre que nadie lee jamás: no se guarda, no se muestra, no
+       * se usa. Son veinte segundos del presupuesto de 150 s regalados en la
+       * última vuelta, justo cuando queda menos margen.
+       *
+       * La condición es el informe presente, no la tool vista: si se cortara
+       * al ver el `tool_use`, se saldría ANTES de que la herramienta corriera
+       * y no habría informe que guardar.
+       */
+      if (recolector.informe !== undefined) break;
     }
 
     if (recolector.informe === undefined) {
