@@ -98,12 +98,39 @@ async function main() {
   const local = join(dir, NOMBRE_REMOTO);
 
   try {
-    process.stdout.write("Descargando de EAS… ");
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`EAS respondió ${r.status}`);
-    await pipeline(Readable.fromWeb(r.body), createWriteStream(local));
-    const mb = ((await stat(local)).size / 1024 / 1024).toFixed(1);
-    console.log(`${mb} MB`);
+    /*
+     * Reintentos, porque el APK pesa ~125 MB y esto se corre desde donde se
+     * pueda: hotspot, wifi de recinto, lo que haya. Una descarga cortada a la
+     * mitad no es un caso raro acá, es el caso frecuente — y sin reintento el
+     * script falla dejando el APK VIEJO publicado, que es peor que fallar
+     * ruidosamente: nadie se entera de que la gente sigue bajando el anterior.
+     *
+     * Se verifica el tamaño contra Content-Length antes de dar por buena la
+     * descarga. Un archivo truncado sigue siendo un archivo.
+     */
+    let mb = "0";
+    for (let intento = 1; intento <= 4; intento++) {
+      try {
+        process.stdout.write(`Descargando de EAS (intento ${intento})… `);
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`EAS respondió ${r.status}`);
+        const esperado = Number(r.headers.get("content-length") || 0);
+
+        await pipeline(Readable.fromWeb(r.body), createWriteStream(local));
+
+        const bajado = (await stat(local)).size;
+        if (esperado && bajado !== esperado) {
+          throw new Error(`quedó incompleto: ${bajado} de ${esperado} bytes`);
+        }
+        mb = (bajado / 1024 / 1024).toFixed(1);
+        console.log(`${mb} MB ✓`);
+        break;
+      } catch (e) {
+        console.log(`falló (${e.message})`);
+        if (intento === 4) throw new Error(`No se pudo descargar el APK tras 4 intentos.`);
+        await new Promise((r) => setTimeout(r, 3000 * intento));
+      }
+    }
 
     const env = await cargarEnv();
     const cliente = new Client(120_000);

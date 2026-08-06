@@ -131,6 +131,15 @@ function PantallaSesion() {
   const [etapa, setEtapa] = useState<Etapa>('inicio');
   const [dolorPre, setDolorPre] = useState<number | null>(null);
   const [dolorPost, setDolorPost] = useState<number | null>(null);
+  /*
+   * El tamizaje es obligatorio antes de cerrar la sesión.
+   *
+   * Cuando era una lista de casillas, saltárselo se registraba exactamente
+   * igual que responder "no" a las siete: ninguna marca. El agente recibía
+   * "sin signos de alarma" sin que nadie hubiera preguntado nada. Ahora hay
+   * que contestarlas, y un "no" es un no de verdad.
+   */
+  const [tamizajeListo, setTamizajeListo] = useState(false);
   const [sintoma, setSintoma] = useState('');
   const [lado, setLado] = useState<LadoAfectado | null>(null);
   const [signos, setSignos] = useState<ClaveSigno[]>([]);
@@ -250,6 +259,7 @@ function PantallaSesion() {
     inicioMs.current = Date.now();
     setReps(0);
     setHud({ rom: null, sostenFalta: null, puntos: [] });
+    setTamizajeListo(false);
     setEtapa('midiendo');
   };
 
@@ -384,15 +394,13 @@ function PantallaSesion() {
 
         <View style={s.separador} />
 
-        <Text style={s.tituloChico}>¿Te pasó alguna de estas cosas hoy?</Text>
-        <Text style={s.parrafoSuave}>
-          Marca solo lo que sí te pasó. Si no te pasó ninguna, sigue sin marcar nada.
-        </Text>
+        <Text style={s.tituloChico}>¿Te pasó algo de esto hoy?</Text>
         <TamizajeSignos
           marcados={signos}
-          onToggle={(c) =>
-            setSignos((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]))
+          onResponder={(c, si) =>
+            setSignos((prev) => (si ? (prev.includes(c) ? prev : [...prev, c]) : prev.filter((x) => x !== c)))
           }
+          onCompleto={() => setTamizajeListo(true)}
         />
 
         {signos.length > 0 && (
@@ -407,7 +415,11 @@ function PantallaSesion() {
           style={s.input} placeholder="¿Sentiste algo más? (opcional)"
           placeholderTextColor={C.textoSuave} value={sintoma} onChangeText={setSintoma}
         />
-        <Boton titulo="Ver mi resultado" onPress={enviar} deshabilitado={dolorPost === null} />
+        <Boton
+          titulo="Ver mi resultado"
+          onPress={enviar}
+          deshabilitado={dolorPost === null || !tamizajeListo}
+        />
       </ScrollView>
     );
   }

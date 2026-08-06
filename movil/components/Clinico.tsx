@@ -1,5 +1,7 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { C, R } from '../lib/theme';
+import { decirPregunta, hablar } from '../lib/voz';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Piezas clínicas de la app del paciente.
@@ -176,34 +178,148 @@ export const SIGNOS = [
 
 export type ClaveSigno = (typeof SIGNOS)[number]['clave'];
 
+/**
+ * Tamizaje hablado, una pregunta a la vez.
+ *
+ * Antes era una lista de siete casillas para leer y marcar. Paulina lo miró y
+ * dijo lo obvio: nuestro usuario es una persona mayor recién salida de un ACV,
+ * a veces con afasia o con la visión comprometida, y le estábamos pidiendo que
+ * leyera siete frases clínicas y decidiera cuáles aplicaban. Quien no lee bien
+ * no marca nada, y "no marcó nada" se registra idéntico a "no le pasó nada".
+ * Un tamizaje de seguridad que falla en silencio es peor que no tenerlo,
+ * porque además da confianza.
+ *
+ * Ahora se pregunta como preguntaría una persona: una a la vez, en voz alta,
+ * con dos botones grandes. Se responde sin leer nada.
+ */
 export function TamizajeSignos({
   marcados,
-  onToggle,
+  onResponder,
+  onCompleto,
 }: {
   marcados: ClaveSigno[];
-  onToggle: (c: ClaveSigno) => void;
+  onResponder: (c: ClaveSigno, si: boolean) => void;
+  onCompleto?: () => void;
 }) {
+  const [indice, setIndice] = useState(0);
+  const [empezado, setEmpezado] = useState(false);
+  const listo = indice >= SIGNOS.length;
+  const actual = SIGNOS[indice];
+
+  // Cada pregunta se dice al aparecer. `decirPregunta` interrumpe la anterior:
+  // si alguien avanza rápido, no queremos dos voces encimadas.
+  useEffect(() => {
+    if (!empezado || !actual) return;
+    decirPregunta(actual.texto);
+  }, [empezado, actual]);
+
+  useEffect(() => {
+    if (!empezado || !listo) return;
+    hablar(
+      marcados.length > 0
+        ? 'Gracias. Le vamos a avisar a tu kinesiólogo.'
+        : 'Listo, ninguna de esas cosas te pasó. Gracias.',
+      { interrumpe: true, minMs: 0 },
+    );
+    onCompleto?.();
+    // onCompleto no va en las dependencias a propósito: si el padre lo redefine
+    // en cada render, esto se dispararía en bucle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empezado, listo, marcados.length]);
+
+  if (!empezado) {
+    return (
+      <View style={s.tamiCaja}>
+        <Text style={s.tamiIntro}>
+          Antes de terminar, {SIGNOS.length} preguntas cortas. Te las voy a leer.
+        </Text>
+        <View style={s.tamiBotonGrande}>
+          <Pressable
+            onPress={() => {
+              hablar('Te voy a hacer unas preguntas. Responde sí o no.', {
+                interrumpe: true,
+                minMs: 0,
+              });
+              setEmpezado(true);
+            }}
+            android_ripple={{ color: 'rgba(255,255,255,0.2)' }}
+            style={s.tamiBotonZona}
+            accessibilityRole="button"
+          >
+            <Text style={s.tamiBotonTexto}>Empezar las preguntas</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  if (listo) {
+    return (
+      <View style={[s.tamiCaja, marcados.length > 0 && s.tamiCajaAlerta]}>
+        <Text style={[s.tamiResumen, marcados.length > 0 && s.tamiResumenAlerta]}>
+          {marcados.length === 0
+            ? 'Respondiste que no a todas. '
+            : `Marcaste ${marcados.length} ${marcados.length === 1 ? 'cosa' : 'cosas'}. `}
+        </Text>
+        <Pressable
+          onPress={() => setIndice(0)}
+          style={s.tamiRepetirZona}
+          accessibilityRole="button"
+        >
+          <Text style={s.tamiRepetir}>Volver a responderlas</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
-    <View style={s.signos}>
-      {SIGNOS.map((sig) => {
-        const activo = marcados.includes(sig.clave);
-        return (
-          <View key={sig.clave} style={[s.signo, activo && s.signoActivo]}>
-            <Pressable
-              onPress={() => onToggle(sig.clave)}
-              android_ripple={{ color: 'rgba(220,38,38,0.12)' }}
-              style={s.signoZona}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: activo }}
-            >
-              <View style={[s.casilla, activo && s.casillaActiva]}>
-                {activo && <Text style={s.casillaMarca}>✓</Text>}
-              </View>
-              <Text style={[s.signoTexto, activo && s.signoTextoActivo]}>{sig.texto}</Text>
-            </Pressable>
-          </View>
-        );
-      })}
+    <View style={s.tamiCaja}>
+      <Text style={s.tamiPaso}>
+        Pregunta {indice + 1} de {SIGNOS.length}
+      </Text>
+
+      <Text style={s.tamiPregunta}>{actual.texto}</Text>
+
+      <Pressable
+        onPress={() => decirPregunta(actual.texto)}
+        style={s.tamiRepetirZona}
+        accessibilityRole="button"
+        accessibilityLabel="Escuchar la pregunta de nuevo"
+      >
+        <Text style={s.tamiRepetir}>🔊 Escuchar de nuevo</Text>
+      </Pressable>
+
+      <View style={s.tamiRespuestas}>
+        <View style={[s.tamiRespuesta, s.tamiNo]}>
+          <Pressable
+            onPress={() => {
+              onResponder(actual.clave, false);
+              setIndice((i) => i + 1);
+            }}
+            android_ripple={{ color: 'rgba(27,42,107,0.12)' }}
+            style={s.tamiRespuestaZona}
+            accessibilityRole="button"
+            accessibilityLabel={`No. ${actual.texto}`}
+          >
+            <Text style={s.tamiNoTexto}>No</Text>
+          </Pressable>
+        </View>
+
+        <View style={[s.tamiRespuesta, s.tamiSi]}>
+          <Pressable
+            onPress={() => {
+              onResponder(actual.clave, true);
+              setIndice((i) => i + 1);
+            }}
+            android_ripple={{ color: 'rgba(255,255,255,0.25)' }}
+            style={s.tamiRespuestaZona}
+            accessibilityRole="button"
+            accessibilityLabel={`Sí. ${actual.texto}`}
+          >
+            <Text style={s.tamiSiTexto}>Sí</Text>
+          </Pressable>
+        </View>
+      </View>
     </View>
   );
 }
@@ -246,19 +362,39 @@ const s = StyleSheet.create({
   ladoTexto: { fontSize: 16, fontWeight: '700', color: C.marino },
   ladoTextoActivo: { color: C.blanco },
 
-  signos: { gap: 8 },
-  signo: {
-    borderRadius: R, borderWidth: 1.5, borderColor: C.borde,
-    backgroundColor: C.hielo, overflow: 'hidden',
+  tamiCaja: {
+    borderRadius: R, borderWidth: 2, borderColor: C.borde,
+    backgroundColor: C.hielo, padding: 20, gap: 14, alignItems: 'center',
   },
-  signoActivo: { borderColor: C.rojo, backgroundColor: '#FEF2F2' },
-  signoZona: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 },
-  casilla: {
-    width: 26, height: 26, borderRadius: 7, borderWidth: 2, borderColor: C.borde,
-    alignItems: 'center', justifyContent: 'center', backgroundColor: C.blanco,
+  tamiCajaAlerta: { borderColor: C.rojo, backgroundColor: '#FEF2F2' },
+  tamiIntro: { fontSize: 17, color: C.texto, textAlign: 'center', lineHeight: 24 },
+  tamiPaso: {
+    fontSize: 12.5, fontWeight: '800', color: C.electrico,
+    textTransform: 'uppercase', letterSpacing: 0.8,
   },
-  casillaActiva: { borderColor: C.rojo, backgroundColor: C.rojo },
-  casillaMarca: { color: C.blanco, fontSize: 16, fontWeight: '800' },
+  // Grande de verdad: esta frase es lo único que la persona tiene que entender
+  // en esta pantalla, y muchas veces la va a estar escuchando más que leyendo.
+  tamiPregunta: {
+    fontSize: 22, fontWeight: '700', color: C.marino,
+    textAlign: 'center', lineHeight: 30,
+  },
+  tamiRepetirZona: { paddingVertical: 6, paddingHorizontal: 10 },
+  tamiRepetir: { fontSize: 15, fontWeight: '700', color: C.electrico },
+  tamiRespuestas: { flexDirection: 'row', gap: 12, alignSelf: 'stretch' },
+  tamiRespuesta: { flex: 1, borderRadius: R, overflow: 'hidden', borderWidth: 2 },
+  tamiRespuestaZona: { paddingVertical: 20, alignItems: 'center' },
+  tamiNo: { borderColor: C.borde, backgroundColor: C.blanco },
+  tamiNoTexto: { fontSize: 22, fontWeight: '800', color: C.marino },
+  tamiSi: { borderColor: C.rojo, backgroundColor: C.rojo },
+  tamiSiTexto: { fontSize: 22, fontWeight: '800', color: C.blanco },
+  tamiBotonGrande: {
+    alignSelf: 'stretch', borderRadius: R, overflow: 'hidden', backgroundColor: C.electrico,
+  },
+  tamiBotonZona: { paddingVertical: 18, alignItems: 'center' },
+  tamiBotonTexto: { fontSize: 18, fontWeight: '800', color: C.blanco },
+  tamiResumen: { fontSize: 17, color: C.texto, textAlign: 'center', lineHeight: 24 },
+  tamiResumenAlerta: { color: C.rojo, fontWeight: '700' },
+
   signoTexto: { flex: 1, fontSize: 15.5, color: C.texto, lineHeight: 21 },
   signoTextoActivo: { color: C.rojo, fontWeight: '600' },
 });

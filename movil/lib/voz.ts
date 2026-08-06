@@ -38,10 +38,13 @@ let ultimaMs = 0;
  *  - `interrumpe` corta lo que esté diciendo, para que el conteo no llegue
  *    tarde cuando la persona ya bajó el brazo.
  */
-export function hablar(texto: string, opciones: { interrumpe?: boolean; minMs?: number } = {}) {
+export function hablar(
+  texto: string,
+  opciones: { interrumpe?: boolean; minMs?: number; rate?: number } = {},
+) {
   if (!voz) return;
   const ahora = Date.now();
-  const { interrumpe = false, minMs = 1500 } = opciones;
+  const { interrumpe = false, minMs = 1500, rate } = opciones;
 
   if (texto === ultimaFrase && ahora - ultimaMs < minMs) return;
   ultimaFrase = texto;
@@ -50,9 +53,16 @@ export function hablar(texto: string, opciones: { interrumpe?: boolean; minMs?: 
   if (interrumpe) voz.stop();
   voz.speak(texto, {
     language: 'es-CL',
-    // Un poco más lento que el habla normal: el usuario es una persona mayor
-    // que además está ejercitando.
-    rate: 0.92,
+    /*
+     * Bastante más lento que el habla normal.
+     *
+     * Empezó en 0.92 y Paulina pidió bajarlo. Tiene sentido clínico además de
+     * de accesibilidad: después de un ACV es frecuente que el procesamiento
+     * del lenguaje esté enlentecido, y a esta persona además le estamos
+     * hablando mientras sostiene un brazo arriba. Si no alcanza a procesar la
+     * instrucción, la instrucción no existe.
+     */
+    rate: rate ?? 0.8,
     pitch: 1.0,
   });
 }
@@ -77,4 +87,16 @@ export function decirInstruccionInicial(lado: 'izquierdo' | 'derecho') {
     `Siéntate derecho. Levanta el brazo ${lado} despacio, mantenlo arriba mientras cuento hasta tres, y bájalo con calma.`,
     { minMs: 8000 },
   );
+}
+
+/**
+ * Las preguntas del tamizaje, dichas en voz alta.
+ *
+ * Más lento todavía que el resto: acá la persona tiene que ENTENDER la
+ * pregunta y decidir, no solo seguir un ritmo. Y `interrumpe` es obligatorio
+ * — si se avanza rápido entre preguntas, la anterior se corta en vez de
+ * encolarse y quedar respondiendo a destiempo.
+ */
+export function decirPregunta(texto: string) {
+  hablar(texto, { interrumpe: true, minMs: 0, rate: 0.74 });
 }
