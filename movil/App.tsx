@@ -459,11 +459,48 @@ function PantallaSesion() {
           style={s.input} placeholder="¿Sentiste algo más? (opcional)"
           placeholderTextColor={C.textoSuave} value={sintoma} onChangeText={setSintoma}
         />
+
+        {/*
+         * El botón NUNCA queda muerto.
+         *
+         * Antes estaba `deshabilitado` hasta responder el tamizaje completo, y
+         * en la primera prueba real pasó exactamente lo que tenía que pasar:
+         * Paulina lo tocó, no ocurrió nada, y no había forma de saber por qué.
+         * La sesión no se envió y desde afuera parecía que la app estaba rota.
+         *
+         * Un control que no responde no comunica nada; uno que responde
+         * diciendo qué falta, sí. El tamizaje sigue siendo obligatorio —es el
+         * mecanismo de derivación y no se negocia— pero ahora el motivo se
+         * dice en voz alta y por escrito, y la voz importa: la persona a la
+         * que le hablamos puede no estar leyendo la pantalla.
+         */}
         <Boton
           titulo="Ver mi resultado"
-          onPress={enviar}
-          deshabilitado={dolorPost === null || !tamizajeListo}
+          onPress={() => {
+            if (dolorPost === null) {
+              hablar('Antes de seguir, marca cuánto dolor sientes ahora.', { interrumpe: true, minMs: 0 });
+              Alert.alert('Falta el dolor', 'Toca el número que representa tu dolor, del 0 al 10.');
+              return;
+            }
+            if (!tamizajeListo) {
+              hablar('Antes de terminar, responde las siete preguntas.', { interrumpe: true, minMs: 0 });
+              Alert.alert(
+                'Faltan las preguntas',
+                'Toca "Empezar las preguntas" más arriba. Son siete y te las leo en voz alta: sirven para avisarle a tu kinesiólogo si te pasó algo importante.',
+              );
+              return;
+            }
+            void enviar();
+          }}
         />
+
+        {(dolorPost === null || !tamizajeListo) && (
+          <Text style={s.faltante}>
+            {dolorPost === null
+              ? 'Falta marcar tu dolor.'
+              : 'Faltan las 7 preguntas de más arriba.'}
+          </Text>
+        )}
       </ScrollView>
     );
   }
@@ -736,6 +773,9 @@ const s = StyleSheet.create({
   probarVozTexto: { fontSize: 15.5, fontWeight: '700', color: C.marino },
   probarVozInfo: { fontSize: 12, color: C.textoSuave },
 
+  faltante: {
+    fontSize: 14.5, fontWeight: '700', color: C.rojo, textAlign: 'center', marginTop: -4,
+  },
   pantallaCentrada: {
     flex: 1, backgroundColor: C.fondo, justifyContent: 'center',
     paddingHorizontal: 24, paddingVertical: 40, gap: 16,
